@@ -477,21 +477,22 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
-    text = (
-        "🔐 Админ-команды:\n\n"
-        "/admin_stats - общая статистика\n"
-        "/admin_links - количество ссылок в пуле\n"
-        "/admin_users - список пользователей\n"
-        "/admin_create <тип> <кол-во> <дни> <лимит> - создать ключи\n"
-        "/admin_deactivate <ключ> - деактивировать ключ\n"
-        "/admin_activate <ключ> - активировать ключ\n"
-        "/admin_refill <ключ> <количество> - пополнить остаток\n"
-        "/admin_deletekey <ключ> - удалить ключ\n"
-        "/admin_deleteuser <user_id> - удалить пользователя\n"
-        "/admin_addlinks - добавить ссылки (файл или текст)\n"
-        "/admin_linkstats - топ пользователей\n"
-        "/admin_help - это сообщение"
-    )
+text = (
+    "🔐 Админ-команды:\n\n"
+    "/admin_stats - общая статистика\n"
+    "/admin_links - количество ссылок в пуле\n"
+    "/admin_users - список пользователей\n"
+    "/admin_create <тип> <кол-во> <дни> <лимит> - создать ключи\n"
+    "/admin_deactivate <ключ> - деактивировать ключ\n"
+    "/admin_activate <ключ> - активировать ключ\n"
+    "/admin_refill <ключ> <количество> - пополнить остаток\n"
+    "/admin_deletekey <ключ> - удалить ключ\n"
+    "/admin_deleteuser <user_id> - удалить пользователя\n"
+    "/admin_addlinks - добавить ссылки (файл или текст)\n"
+    "/admin_linkstats - топ пользователей\n"
+    "/admin_get - получить ссылку без ключа (админ)\n"   # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
+    "/admin_help - это сообщение"
+)
     await update.message.reply_text(text)
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -727,6 +728,41 @@ async def admin_linkstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
+        
+        async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Админская команда: получить ссылку без ключа"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Доступ запрещён")
+        return
+    
+    try:
+        all_links = load_links()
+        if not all_links:
+            await update.message.reply_text("❌ Нет доступных ссылок в пуле")
+            return
+        
+        # Выбираем случайную ссылку
+        chosen_link = random.choice(all_links)
+        
+        # Удаляем ссылку из пула
+        try:
+            supabase.table('links').delete().eq('url', chosen_link).execute()
+            print(f"✅ Админ выдал ссылку: {chosen_link}")
+        except Exception as e:
+            print(f"❌ Ошибка удаления ссылки: {e}")
+            await update.message.reply_text("❌ Ошибка при выдаче ссылки")
+            return
+        
+        # Показываем ссылку админу
+        remaining = len(load_links())
+        await update.message.reply_text(
+            f"📎 Ссылка:\n{chosen_link}\n\n"
+            f"Осталось ссылок в пуле: {remaining}"
+        )
+        
+    except Exception as e:
+        print(f"❌ admin_get: {e}")
+        await update.message.reply_text("❌ Произошла ошибка")
 
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
 bot_app = Application.builder().token(BOT_TOKEN).build()
@@ -749,6 +785,7 @@ bot_app.add_handler(CommandHandler("admin_confirm_delete", admin_confirm_delete)
 bot_app.add_handler(CommandHandler("admin_deleteuser", admin_deleteuser))
 bot_app.add_handler(CommandHandler("admin_addlinks", admin_addlinks))
 bot_app.add_handler(CommandHandler("admin_linkstats", admin_linkstats))
+bot_app.add_handler(CommandHandler("admin_get", admin_get))
 bot_app.add_handler(CallbackQueryHandler(deleteuser_callback, pattern="^(confirm_deluser_|cancel_deluser)"))
 bot_app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_links_input))
 bot_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
