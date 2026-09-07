@@ -1,6 +1,4 @@
-python-telegram-bot>=21.0
-Flask==2.3.3
-flask-cors==4.0.0
+python-telegram-bot==21.6
+httpx==0.27.2
 requests==2.31.0
 supabase
-gunicorn==21.2.0
