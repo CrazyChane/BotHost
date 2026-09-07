@@ -6,35 +6,33 @@ import tempfile
 import string
 import secrets
 import json
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import sys
+import traceback
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from supabase import create_client, Client
 
-# ---------- ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ----------
+# ========== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "741695652"))
-PORT = int(os.getenv("PORT", 10000))
 
-# Проверка обязательных переменных
+# ========== ПРОВЕРКА ПЕРЕМЕННЫХ ==========
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не задан в переменных окружения!")
+    raise ValueError("❌ BOT_TOKEN не задан в переменных окружения!")
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("SUPABASE_URL и SUPABASE_KEY должны быть заданы!")
+    raise ValueError("❌ SUPABASE_URL и SUPABASE_KEY должны быть заданы!")
 
-# ---------- ИНИЦИАЛИЗАЦИЯ ----------
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-app = Flask(__name__)
-CORS(app)
-
-print(f"✅ Бот инициализирован")
+print("🚀 СТАРТ: server.py загружен")
+print(f"BOT_TOKEN: {'✅ есть' if BOT_TOKEN else '❌ НЕТ!'}")
+print(f"SUPABASE_URL: {'✅ есть' if SUPABASE_URL else '❌ НЕТ!'}")
 print(f"🔑 ADMIN_ID: {ADMIN_ID}")
-print(f"🌐 Порт: {PORT}")
 
-# ---------- ПРОВЕРКА СТРУКТУРЫ ТАБЛИЦ ----------
+# ========== ПОДКЛЮЧЕНИЕ К SUPABASE ==========
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ========== ПРОВЕРКА СТРУКТУРЫ ТАБЛИЦ ==========
 def ensure_tables():
     try:
         supabase.table('keys').select('owner_id').limit(1).execute()
@@ -50,7 +48,7 @@ def ensure_tables():
         else:
             print(f"⚠️ Ошибка проверки таблиц: {e}")
 
-# ---------- РАБОТА С БАЗОЙ ДАННЫХ ----------
+# ========== РАБОТА С БАЗОЙ ДАННЫХ ==========
 def load_keys():
     try:
         response = supabase.table('keys').select('*').execute()
@@ -156,7 +154,7 @@ def add_links_to_db(links_list):
                 print(f"⚠️ Ошибка добавления {url}: {e}")
     return added
 
-# ---------- БИЗНЕС-ЛОГИКА ----------
+# ========== БИЗНЕС-ЛОГИКА ==========
 def validate_key_logic(key, user_id=None):
     try:
         if not key:
@@ -302,7 +300,7 @@ def stats_logic(owner_id):
         "keys_info": active_keys
     }
 
-# ---------- АДМИН-ФУНКЦИИ ----------
+# ========== АДМИН-ФУНКЦИИ ==========
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
@@ -347,18 +345,23 @@ def admin_delete_user(user_id):
         print(f"❌ admin_delete_user: {e}")
         return 0
 
-# ---------- ТЕЛЕГРАМ-ОБРАБОТЧИКИ ----------
+# ========== ТЕЛЕГРАМ-ОБРАБОТЧИКИ ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Добро пожаловать в NFAvpn!\n\n"
-        "Вы можете активировать несколько ключей на одном аккаунте.\n"
-        "Каждый ключ добавляет свой лимит ссылок.\n\n"
-        "Команды:\n"
-        "/key ВАШ_КЛЮЧ - активировать ключ\n"
-        "/get - получить случайную ссылку\n"
-        "/stat - статистика по всем вашим ключам\n"
-        "/history - история всех полученных ссылок\n"
-        "/help - это сообщение"
+        """👋 Добро пожаловать в NFAvpn!
+
+Вы можете активировать несколько ключей на одном аккаунте.
+Каждый ключ добавляет свой лимит ссылок.
+
+Команды:
+/key ВАШ_КЛЮЧ - активировать ключ
+/get - получить случайную ссылку
+/stat - статистика по всем вашим ключам
+/history - история всех полученных ссылок
+/help - это сообщение
+
+🎉 По всем вопросам обращайтесь:
+@user123311a"""
     )
 
 async def set_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -461,13 +464,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/get - получить ссылку\n"
         "/stat - статистика по всем вашим ключам\n"
         "/history - история всех полученных ссылок\n"
-        "/help - это сообщение\n"
+        "/help - это сообщение\n\n"
+        "🎉 По всем вопросам обращайтесь:\n"
+        "@user123311a"
     )
     if is_admin(update.effective_user.id):
-        text += "\n🔐 Админ-команды:\n/admin_help - список"
+        text += "\n\n🔐 Админ-команды:\n/admin_help - список"
     await update.message.reply_text(text)
 
-# ---------- АДМИН-КОМАНДЫ (сокращённые, без изменений логики) ----------
+# ========== АДМИН-КОМАНДЫ ==========
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
@@ -511,7 +516,6 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
-# ---------- ДРУГИЕ АДМИН-КОМАНДЫ (шаблон) ----------
 async def admin_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
@@ -724,7 +728,7 @@ async def admin_linkstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
-# ---------- СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ----------
+# ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
 bot_app = Application.builder().token(BOT_TOKEN).build()
 bot_app.add_handler(CommandHandler("start", start))
 bot_app.add_handler(CommandHandler("help", help_command))
@@ -749,38 +753,11 @@ bot_app.add_handler(CallbackQueryHandler(deleteuser_callback, pattern="^(confirm
 bot_app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_links_input))
 bot_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
 
-# ---------- ВЕБХУК ----------
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    try:
-        data = request.get_json(force=True)
-        update = Update.de_json(data, bot_app.bot)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(bot_app.process_update(update))
-        finally:
-            loop.close()
-        return "ok", 200
-    except Exception as e:
-        print(f"❌ Webhook error: {e}")
-        return "error", 500
-
-@app.route('/set_webhook', methods=['GET'])
-def set_webhook():
-    from urllib.parse import urljoin
-    webhook_url = urljoin(request.url_root, 'webhook')
-    import requests
-    response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={webhook_url}")
-    return jsonify(response.json())
-
-@app.route('/', methods=['GET'])
-def index():
-    return "✅ Бот работает!"
-
-# ---------- ЗАПУСК ----------
+# ========== ЗАПУСК ==========
 if __name__ == "__main__":
     ensure_tables()
+    
+    # Создаём тестовые ключи, если их нет
     if not load_keys():
         sample_keys = {
             "FREE-2024-ABCD": {
@@ -806,4 +783,7 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"⚠️ Ошибка создания тестовых ключей: {e}")
         print("✅ Тестовые ключи созданы")
-    app.run(host='0.0.0.0', port=PORT)
+    
+    # ЗАПУСК В РЕЖИМЕ LONG POLLING
+    print("🚀 Запуск бота в режиме Long Polling...")
+    bot_app.run_polling()
