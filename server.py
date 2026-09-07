@@ -477,23 +477,22 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
-text = (
-    "🔐 Админ-команды:\n\n"
-    "/admin_stats - общая статистика\n"
-    "/admin_links - количество ссылок в пуле\n"
-    "/admin_users - список пользователей\n"
-    "/admin_create <тип> <кол-во> <дни> <лимит> - создать ключи\n"
-    "/admin_deactivate <ключ> - деактивировать ключ\n"
-    "/admin_activate <ключ> - активировать ключ\n"
-    "/admin_refill <ключ> <количество> - пополнить остаток\n"
-    "/admin_deletekey <ключ> - удалить ключ\n"
-    "/admin_deleteuser <user_id> - удалить пользователя\n"
-    "/admin_addlinks - добавить ссылки (файл или текст)\n"
-    "/admin_linkstats - топ пользователей\n"
-    "/admin_get - получить ссылку без ключа (админ)\n"   # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
-    "/admin_help - это сообщение"
-)
-
+    text = (
+        "🔐 Админ-команды:\n\n"
+        "/admin_stats - общая статистика\n"
+        "/admin_links - количество ссылок в пуле\n"
+        "/admin_users - список пользователей\n"
+        "/admin_create <тип> <кол-во> <дни> <лимит> - создать ключи\n"
+        "/admin_deactivate <ключ> - деактивировать ключ\n"
+        "/admin_activate <ключ> - активировать ключ\n"
+        "/admin_refill <ключ> <количество> - пополнить остаток\n"
+        "/admin_deletekey <ключ> - удалить ключ\n"
+        "/admin_deleteuser <user_id> - удалить пользователя\n"
+        "/admin_addlinks - добавить ссылки (файл или текст)\n"
+        "/admin_linkstats - топ пользователей\n"
+        "/admin_get - получить ссылку без ключа (админ)\n"
+        "/admin_help - это сообщение"
+    )
     await update.message.reply_text(text)
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -729,8 +728,8 @@ async def admin_linkstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
-        
-        async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Админская команда: получить ссылку без ключа"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
