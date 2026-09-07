@@ -493,6 +493,7 @@ text = (
     "/admin_get - получить ссылку без ключа (админ)\n"   # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
     "/admin_help - это сообщение"
 )
+
     await update.message.reply_text(text)
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
