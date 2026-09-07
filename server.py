@@ -730,9 +730,31 @@ async def admin_linkstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
 async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Админская команда: получить ссылку без ключа"""
+    """Админская команда: получить N ссылок без ключа"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
+        return
+    
+    # Проверяем, есть ли аргумент (количество)
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "❌ Укажите количество ссылок:\n"
+            "/admin_get <количество>\n\n"
+            "Пример: /admin_get 5"
+        )
+        return
+    
+    try:
+        count = int(args[0])
+        if count <= 0:
+            await update.message.reply_text("❌ Количество должно быть больше 0")
+            return
+        if count > 50:
+            await update.message.reply_text("❌ Максимум 50 ссылок за раз")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Введите число, например: /admin_get 5")
         return
     
     try:
@@ -741,24 +763,37 @@ async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Нет доступных ссылок в пуле")
             return
         
-        # Выбираем случайную ссылку
-        chosen_link = random.choice(all_links)
+        # Если запрошено больше, чем есть
+        if count > len(all_links):
+            count = len(all_links)
+            await update.message.reply_text(f"⚠️ В пуле только {count} ссылок, выдаю все")
         
-        # Удаляем ссылку из пула
-        try:
-            supabase.table('links').delete().eq('url', chosen_link).execute()
-            print(f"✅ Админ выдал ссылку: {chosen_link}")
-        except Exception as e:
-            print(f"❌ Ошибка удаления ссылки: {e}")
-            await update.message.reply_text("❌ Ошибка при выдаче ссылки")
-            return
+        # Выбираем случайные ссылки
+        chosen_links = random.sample(all_links, count)
         
-        # Показываем ссылку админу
+        # Удаляем выбранные ссылки из пула
+        deleted_count = 0
+        for link in chosen_links:
+            try:
+                supabase.table('links').delete().eq('url', link).execute()
+                deleted_count += 1
+            except Exception as e:
+                print(f"❌ Ошибка удаления {link}: {e}")
+        
+        # Показываем ссылки админу
         remaining = len(load_links())
+        
+        # Формируем ответ
+        links_text = "\n".join([f"{i+1}. {link}" for i, link in enumerate(chosen_links)])
+        
         await update.message.reply_text(
-            f"📎 Ссылка:\n{chosen_link}\n\n"
-            f"Осталось ссылок в пуле: {remaining}"
+            f"📎 Получено {deleted_count} ссылок:\n\n"
+            f"{links_text}\n\n"
+            f"📊 Осталось ссылок в пуле: {remaining}"
         )
+        
+        # Логируем в консоль
+        print(f"✅ Админ выдал {deleted_count} ссылок")
         
     except Exception as e:
         print(f"❌ admin_get: {e}")
