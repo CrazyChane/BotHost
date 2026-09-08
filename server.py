@@ -528,6 +528,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 1. **Скопируйте ключ**, который получили от администратора
 2. **Вставьте ключ** в бота после команды /key
 
+
 3. **Нажмите Enter** — ключ активирован!
 
 ---
@@ -541,7 +542,24 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🤝 **Благодарим за использование NFAvpn!**"""
     )
-
+    
+    # Отправляем скриншоты, если они есть
+    screenshots = load_screenshots()
+    if screenshots:
+        for screenshot in screenshots:
+            try:
+                await update.message.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=screenshot['file_id'],
+                    caption=f"🖼️ {screenshot['name']}"
+                )
+            except Exception as e:
+                print(f"❌ Ошибка отправки скриншота: {e}")
+    else:
+        await update.message.reply_text(
+            "ℹ️ Скриншоты ещё не загружены.\n"
+            "Свяжитесь с администратором для получения визуальной инструкции."
+        )
 # ========== АДМИН-КОМАНДЫ ==========
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -561,6 +579,7 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/admin_addlinks - добавить ссылки (файл или текст)\n"
         "/admin_linkstats - топ пользователей\n"
         "/admin_get <количество> - получить N ссылок без ключа\n"
+        "/admin_add_screenshot - добавить скриншот для /info\n"
         "/admin_help - это сообщение"
     )
     await update.message.reply_text(text)
@@ -961,7 +980,9 @@ bot_app.add_handler(CommandHandler("admin_get", admin_get))
 bot_app.add_handler(CallbackQueryHandler(deleteuser_callback, pattern="^(confirm_deluser_|cancel_deluser)"))
 bot_app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_links_input))
 bot_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
-
+bot_app.add_handler(CommandHandler("admin_add_screenshot", admin_add_screenshot))
+bot_app.add_handler(MessageHandler(filters.PHOTO, handle_screenshot_input))
+bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_set_screenshot_name))
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     ensure_tables()
