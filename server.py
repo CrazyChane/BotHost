@@ -467,22 +467,6 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"{i}. {entry['link']} {emoji} ({entry['timestamp'][:16]})")
     await update.message.reply_text("📜 Последние 10 ссылок:\n" + "\n".join(lines))
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "📖 Доступные команды:\n"
-        "/key <ключ> - активировать новый ключ\n"
-        "/get - получить ссылку\n"
-        "/stat - статистика по всем вашим ключам\n"
-        "/history - история всех полученных ссылок\n"
-        "/info - полная информация о покупке и активации ключей\n"
-        "/help - это сообщение\n\n"
-        "🎉 По всем вопросам обращайтесь:\n"
-        "@user123311a"
-    )
-    if is_admin(update.effective_user.id):
-        text += "\n\n🔐 Админ-команды:\n/admin_help - список"
-    await update.message.reply_text(text)
-
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Полная информация о покупке ключей"""
     await update.message.reply_text(
