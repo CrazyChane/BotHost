@@ -1157,7 +1157,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "info":
         text = """📋 **Информация о NFAvpn**
 
-💰 **Цена:** 10 ₽ за 1 ключ (5 использований)
+💰 **Цена:** 100 ₽ за 1 ключ (5 использований)
 🔄 **Гарантия:** Если ни одна ссылка не работает — выдаём новый ключ бесплатно!
 👤 **Админ:** @user123311a"""
         await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
