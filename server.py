@@ -705,19 +705,31 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
+    
     user_keys = load_user_keys()
     users_dict = {}
+    
+    # Собираем данные по пользователям
     for uk in user_keys:
         uid = uk.get('owner_id')
         if uid:
-            users_dict[uid] = users_dict.get(uid, 0) + 1
+            if uid not in users_dict:
+                users_dict[uid] = []
+            users_dict[uid].append(uk['key_text'])
+    
     if not users_dict:
-        await update.message.reply_text("Нет пользователей", reply_markup=get_admin_keyboard())
+        await update.message.reply_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
         return
-    text = "👥 Пользователи:\n"
-    for uid, count in users_dict.items():
-        text += f"{uid} – {count} ключей\n"
-    await update.message.reply_text(text, reply_markup=get_admin_keyboard())
+    
+    text = "👥 **Пользователи и их ключи:**\n\n"
+    
+    for uid, keys in users_dict.items():
+        text += f"**🆔 {uid}** — {len(keys)} ключей\n"
+        for key in keys:
+            text += f"  🔑 `{key}`\n"
+        text += "\n"
+    
+    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
 
 async def admin_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -1449,20 +1461,30 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await query.edit_message_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
         
-        elif data == "admin_users":
-            user_keys = load_user_keys()
-            users_dict = {}
-            for uk in user_keys:
-                uid = uk.get('owner_id')
-                if uid:
-                    users_dict[uid] = users_dict.get(uid, 0) + 1
-            if not users_dict:
-                await query.edit_message_text("Нет пользователей", reply_markup=get_admin_keyboard())
-                return
-            text = "👥 Пользователи:\n"
-            for uid, count in users_dict.items():
-                text += f"{uid} – {count} ключей\n"
-            await query.edit_message_text(text, reply_markup=get_admin_keyboard())
+elif data == "admin_users":
+    user_keys = load_user_keys()
+    users_dict = {}
+    
+    for uk in user_keys:
+        uid = uk.get('owner_id')
+        if uid:
+            if uid not in users_dict:
+                users_dict[uid] = []
+            users_dict[uid].append(uk['key_text'])
+    
+    if not users_dict:
+        await query.edit_message_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
+        return
+    
+    text = "👥 **Пользователи и их ключи:**\n\n"
+    
+    for uid, keys in users_dict.items():
+        text += f"**🆔 {uid}** — {len(keys)} ключей\n"
+        for key in keys:
+            text += f"  🔑 `{key}`\n"
+        text += "\n"
+    
+    await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
         
         elif data == "admin_create":
             await query.edit_message_text(
