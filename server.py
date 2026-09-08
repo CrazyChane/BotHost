@@ -905,6 +905,74 @@ async def handle_links_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"✅ Добавлено {added} ссылок", reply_markup=get_admin_keyboard())
     context.user_data['waiting_links'] = False
 
+async def admin_delete_unused_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаляет все ключи, которые не активированы (owner_id = NULL)"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Доступ запрещён")
+        return
+    
+    # Загружаем все ключи
+    keys = load_keys()
+    
+    # Находим неиспользуемые ключи
+    unused_keys = []
+    for key_text, info in keys.items():
+        if info.get('owner_id') is None:
+            unused_keys.append(key_text)
+    
+    if not unused_keys:
+        await update.message.reply_text(
+            "📭 Нет неиспользуемых ключей для удаления",
+            reply_markup=get_admin_keyboard()
+        )
+        return
+    
+    # Подтверждение
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Да, удалить все", callback_data="confirm_delete_unused"),
+            InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_unused")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"⚠️ Найдено **{len(unused_keys)}** неиспользуемых ключей (не активированы).\n\n"
+        "Они будут удалены безвозвратно.\n"
+        "Вы уверены?",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+
+async def admin_confirm_delete_unused_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback для подтверждения удаления неиспользуемых ключей"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data == "cancel_delete_unused":
+        await query.edit_message_text("❌ Удаление отменено", reply_markup=get_admin_keyboard())
+        return
+    
+    if data == "confirm_delete_unused":
+        # Находим и удаляем неиспользуемые ключи
+        keys = load_keys()
+        deleted_count = 0
+        for key_text, info in keys.items():
+            if info.get('owner_id') is None:
+                try:
+                    supabase.table('keys').delete().eq('key_text', key_text).execute()
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"❌ Ошибка удаления {key_text}: {e}")
+        
+        await query.edit_message_text(
+            f"✅ Удалено **{deleted_count}** неиспользуемых ключей!",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="Markdown"
+        )
+
 async def admin_linkstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
