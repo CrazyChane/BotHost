@@ -860,7 +860,81 @@ async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"❌ admin_get: {e}")
         await update.message.reply_text("❌ Произошла ошибка")
+# ========== РАБОТА СО СКРИНШОТАМИ ==========
+def save_screenshot(name, file_id):
+    """Сохраняет скриншот в базу данных"""
+    try:
+        supabase.table('screenshots').insert({
+            'name': name,
+            'file_id': file_id
+        }).execute()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка сохранения скриншота: {e}")
+        return False
 
+def load_screenshots():
+    """Загружает все скриншоты из базы"""
+    try:
+        response = supabase.table('screenshots').select('*').execute()
+        return response.data
+    except Exception as e:
+        print(f"❌ Ошибка загрузки скриншотов: {e}")
+        return []
+
+def delete_screenshot(screenshot_id):
+    """Удаляет скриншот по ID"""
+    try:
+        supabase.table('screenshots').delete().eq('id', screenshot_id).execute()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка удаления скриншота: {e}")
+        return False
+
+async def admin_add_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Админская команда: добавить скриншот"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Доступ запрещён")
+        return
+    
+    await update.message.reply_text(
+        "📤 Отправьте мне изображение (скриншот), которое хотите добавить.\n"
+        "После отправки укажите название (например: 'Активация ключа' или 'Получение ссылки')"
+    )
+    context.user_data['waiting_screenshot'] = True
+
+async def handle_screenshot_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает загрузку скриншотов"""
+    if not is_admin(update.effective_user.id):
+        return
+    
+    if not context.user_data.get('waiting_screenshot'):
+        return
+    
+    # Если это фото
+    if update.message.photo:
+        # Берем самое большое качество
+        photo = update.message.photo[-1]
+        file_id = photo.file_id
+        
+        # Сохраняем в базу
+        name = context.user_data.get('screenshot_name', 'Скриншот')
+        save_screenshot(name, file_id)
+        
+        await update.message.reply_text(f"✅ Скриншот '{name}' сохранён!")
+        context.user_data['waiting_screenshot'] = False
+        context.user_data['screenshot_name'] = None
+    else:
+        await update.message.reply_text("❌ Отправьте изображение (фото)")
+
+async def admin_set_screenshot_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Устанавливает название для скриншота перед загрузкой"""
+    if not is_admin(update.effective_user.id):
+        return
+    
+    if context.user_data.get('waiting_screenshot'):
+        context.user_data['screenshot_name'] = update.message.text
+        await update.message.reply_text(f"✅ Название сохранено: '{update.message.text}'\nТеперь отправьте изображение.")
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
 bot_app = Application.builder().token(BOT_TOKEN).build()
 bot_app.add_handler(CommandHandler("start", start))
