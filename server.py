@@ -368,6 +368,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /stat - статистика по всем вашим ключам
 /history - история всех полученных ссылок
 /help - это сообщение
+/info - полная информация о покупке и активации ключей\n
 
 🎉 По всем вопросам обращайтесь:
 @user123311a"""
@@ -473,6 +474,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/get - получить ссылку\n"
         "/stat - статистика по всем вашим ключам\n"
         "/history - история всех полученных ссылок\n"
+        "/info - полная информация о покупке и активации ключей\n"
         "/help - это сообщение\n\n"
         "🎉 По всем вопросам обращайтесь:\n"
         "@user123311a"
@@ -480,6 +482,51 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(update.effective_user.id):
         text += "\n\n🔐 Админ-команды:\n/admin_help - список"
     await update.message.reply_text(text)
+
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Полная информация о покупке ключей"""
+    await update.message.reply_text(
+        """📋 **NFAvpn — информация о покупке ключей**
+
+---
+
+**🔑 Как получить ключ:**
+
+1. Напишите администратору: @user123311a
+2. Оформите заказ:
+   • Укажите нужное количество ключей
+   • Получите реквизиты для оплаты
+3. Оплатите заказ
+4. Получите ключ(и) и активируйте их командой /key
+
+---
+
+**💰 Стоимость:**
+
+• 1 ключ на **5 использований** — **50 ₽**
+• По вопросам оптовых закупок — пишите @user123311a
+
+---
+
+**🔄 Гарантия возврата:**
+
+Если **ни одна** из 5 ссылок по вашему ключу не работает:
+→ Мы выдаём **новый ключ** на 5 использований **бесплатно**!
+
+Условия:
+• Проверьте все 5 ссылок
+• Если ни одна не работает — напишите @user123311a
+• Приложите скриншоты (для подтверждения)
+• Мы выдадим новый ключ
+
+---
+
+**📱 Как активировать ключ:**
+
+Следуйте инструкции на скриншотах:
+
+1️⃣ **Скопируйте ключ**, который получили от администратора
+2️⃣ **Вставьте ключ** в бота после команды /key
 
 # ========== АДМИН-КОМАНДЫ ==========
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -816,6 +863,7 @@ bot_app.add_handler(CommandHandler("key", set_key))
 bot_app.add_handler(CommandHandler("get", get_link))
 bot_app.add_handler(CommandHandler("stat", stats))
 bot_app.add_handler(CommandHandler("history", history))
+bot_app.add_handler(CommandHandler("info", info_command))
 bot_app.add_handler(CommandHandler("admin_help", admin_help))
 bot_app.add_handler(CommandHandler("admin_stats", admin_stats))
 bot_app.add_handler(CommandHandler("admin_links", admin_links))
