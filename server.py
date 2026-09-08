@@ -414,7 +414,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 3️⃣ Получите ключ и активируйте его командой /key
 
 💰 Стоимость ключа:
-• 1 ключ на 5 использований — 50 ₽
+• 1 ключ на 5 использований — 100 ₽
 • По вопросам оптовых закупок — пишите @user123311a
 
 🎉 По всем вопросам обращайтесь:
@@ -1157,7 +1157,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "info":
         text = """📋 **Информация о NFAvpn**
 
-💰 **Цена:** 50 ₽ за 1 ключ (5 использований)
+💰 **Цена:** 10 ₽ за 1 ключ (5 использований)
 🔄 **Гарантия:** Если ни одна ссылка не работает — выдаём новый ключ бесплатно!
 👤 **Админ:** @user123311a"""
         await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
