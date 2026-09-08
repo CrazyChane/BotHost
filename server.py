@@ -281,10 +281,9 @@ def stats_logic(owner_id):
     user_keys = load_user_keys(owner_id)
     total_remaining = 0
     active_keys = []
-    today = datetime.datetime.now().date()
     for uk in user_keys:
-        expires = datetime.datetime.strptime(uk['expires'], "%Y-%m-%d").date()
-        if expires >= today:
+        # Считаем все ключи, у которых есть остаток ссылок
+        if uk['remaining_links'] > 0:
             active_keys.append(uk)
             total_remaining += uk['remaining_links']
     total_links_available = len(load_links())
@@ -300,16 +299,17 @@ def stats_logic(owner_id):
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
-def generate_key_string(key_type, days, max_links):
+def generate_key_string(key_type, max_links):
     prefix = "FREE" if key_type == 'trial' else "PREMIUM"
     year = datetime.datetime.now().year
     random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
     key = f"{prefix}-{year}-{random_part}"
-    expiry_date = (datetime.datetime.now() + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+    # Дата окончания через 100 лет (бессрочно)
+    expiry_date = (datetime.datetime.now() + datetime.timedelta(days=365*100)).strftime("%Y-%m-%d")
     return key, expiry_date
 
-def admin_create_key(key_type, days, max_links):
-    key, expires = generate_key_string(key_type, days, max_links)
+def admin_create_key(key_type, max_links):
+    key, expires = generate_key_string(key_type, max_links)
     try:
         supabase.table('keys').insert({
             'key_text': key,
@@ -324,10 +324,10 @@ def admin_create_key(key_type, days, max_links):
         print(f"❌ admin_create_key: {e}")
         return None
 
-def admin_generate_multiple(count, key_type, days, max_links):
+def admin_generate_multiple(count, key_type, max_links):
     created = []
     for _ in range(count):
-        key = admin_create_key(key_type, days, max_links)
+        key = admin_create_key(key_type, max_links)
         if key:
             created.append(key)
     return created
@@ -524,7 +524,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result['keys_info']:
         text += "🔑 Детали по ключам:\n"
         for uk in result['keys_info']:
-            text += f"  {uk['key_text']} – осталось {uk['remaining_links']} ссылок, до {uk['expires']}\n"
+            text += f"  {uk['key_text']} – осталось {uk['remaining_links']} ссылок\n"
     await update.message.reply_text(text, reply_markup=get_main_keyboard())
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -652,7 +652,8 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/admin_stats - общая статистика\n"
         "/admin_links - количество ссылок в пуле\n"
         "/admin_users - список пользователей\n"
-        "/admin_create <тип> <кол-во> <дни> <лимит> - создать ключи\n"
+        "/admin_create <тип> <кол-во> <лимит> - создать бессрочные ключи\n"
+        "   пример: /admin_create premium 5 100\n"
         "/admin_deactivate <ключ> - деактивировать ключ\n"
         "/admin_activate <ключ> - активировать ключ\n"
         "/admin_refill <ключ> <количество> - пополнить остаток\n"
@@ -665,6 +666,7 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/admin_list_screenshots - список всех скриншотов\n"
         "/admin_del_screenshot <ID> - удалить скриншот по ID\n"
         "/admin_all_keys - показать все ключи\n"
+        "/admin_delete_unused - удалить все неиспользуемые ключи\n"
         "/admin_confirm_delete_key <ключ> - удалить ключ с подтверждением\n"
         "/admin_help - это сообщение"
     )
@@ -722,9 +724,11 @@ async def admin_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
     args = context.args
-    if len(args) < 4:
+    if len(args) < 3:
         await update.message.reply_text(
-            "Использование: /admin_create <тип> <кол-во> <дни> <лимит>",
+            "Использование: /admin_create <тип> <кол-во> <лимит>\n"
+            "Пример: /admin_create premium 5 100\n\n"
+            "Тип: trial или premium",
             reply_markup=get_admin_keyboard()
         )
         return
@@ -734,13 +738,15 @@ async def admin_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Тип: trial или premium", reply_markup=get_admin_keyboard())
             return
         count = int(args[1])
-        days = int(args[2])
-        max_links = int(args[3])
-        created = admin_generate_multiple(count, key_type, days, max_links)
+        max_links = int(args[2])
+        if count < 1 or max_links < 1:
+            await update.message.reply_text("Все значения должны быть положительными", reply_markup=get_admin_keyboard())
+            return
+        created = admin_generate_multiple(count, key_type, max_links)
         text = f"✅ Создано {len(created)} ключей:\n" + "\n".join(created) if created else "❌ Ошибка"
         await update.message.reply_text(text, reply_markup=get_admin_keyboard())
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
+    except ValueError:
+        await update.message.reply_text("Ошибка в формате чисел", reply_markup=get_admin_keyboard())
 
 async def admin_deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -906,10 +912,7 @@ async def admin_delete_unused_keys(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("⛔ Доступ запрещён")
         return
     
-    # Загружаем все ключи
     keys = load_keys()
-    
-    # Находим неиспользуемые ключи
     unused_keys = []
     for key_text, info in keys.items():
         if info.get('owner_id') is None:
@@ -922,7 +925,6 @@ async def admin_delete_unused_keys(update: Update, context: ContextTypes.DEFAULT
         )
         return
     
-    # Подтверждение
     keyboard = [
         [
             InlineKeyboardButton("✅ Да, удалить все", callback_data="confirm_delete_unused"),
@@ -951,7 +953,6 @@ async def admin_confirm_delete_unused_callback(update: Update, context: ContextT
         return
     
     if data == "confirm_delete_unused":
-        # Находим и удаляем неиспользуемые ключи
         keys = load_keys()
         deleted_count = 0
         for key_text, info in keys.items():
@@ -1060,7 +1061,6 @@ async def admin_all_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
     
-    # Создаём кнопки для фильтрации
     keyboard = [
         [
             InlineKeyboardButton("🟢 Активные", callback_data="admin_keys_active"),
@@ -1090,7 +1090,6 @@ async def admin_keys_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keys = load_keys()
     
-    # Фильтруем ключи
     filtered_keys = []
     for key_text, info in keys.items():
         active = info.get('active', True)
@@ -1108,21 +1107,17 @@ async def admin_keys_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Формируем текст (максимум 50 ключей, чтобы не превысить лимит сообщения)
     text = f"🔑 **Всего ключей: {len(filtered_keys)}**\n\n"
     text += "📋 **Список ключей:**\n"
     
-    count = 0
     for key_text, info in filtered_keys[:50]:
         status = "🟢 Активен" if info.get('active', True) else "🔴 Деактивирован"
         owner = info.get('owner_id', 'Не привязан')
         text += f"`{key_text}` — {status} | Владелец: {owner}\n"
-        count += 1
     
     if len(filtered_keys) > 50:
         text += f"\n... и ещё {len(filtered_keys) - 50} ключей"
     
-    # Кнопки для удаления ключа
     keyboard = [
         [
             InlineKeyboardButton("🗑️ Удалить ключ", callback_data="admin_deletekey"),
@@ -1158,7 +1153,6 @@ async def admin_confirm_delete_key(update: Update, context: ContextTypes.DEFAULT
     
     key = args[0].strip()
     
-    # Проверяем, существует ли ключ
     keys = load_keys()
     if key not in keys:
         await update.message.reply_text(f"❌ Ключ `{key}` не найден", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
@@ -1167,9 +1161,7 @@ async def admin_confirm_delete_key(update: Update, context: ContextTypes.DEFAULT
     info = keys[key]
     owner_id = info.get('owner_id')
     
-    # Проверяем, активирован ли ключ
     if owner_id is not None:
-        # Ключ активирован — запрашиваем подтверждение
         keyboard = [
             [
                 InlineKeyboardButton("✅ Да, удалить (пользователь потеряет доступ)", callback_data=f"confirm_delkey_{key}"),
@@ -1188,7 +1180,6 @@ async def admin_confirm_delete_key(update: Update, context: ContextTypes.DEFAULT
             parse_mode="Markdown"
         )
     else:
-        # Ключ не активирован — удаляем без подтверждения
         try:
             supabase.table('keys').delete().eq('key_text', key).execute()
             await update.message.reply_text(f"✅ Ключ `{key}` удалён (не был активирован)", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
@@ -1210,7 +1201,6 @@ async def admin_confirm_delete_key_callback(update: Update, context: ContextType
         key = data.replace("confirm_delkey_", "")
         
         try:
-            # Удаляем ключ
             supabase.table('keys').delete().eq('key_text', key).execute()
             await query.edit_message_text(f"✅ Ключ `{key}` успешно удалён!", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
         except Exception as e:
@@ -1476,8 +1466,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data == "admin_create":
             await query.edit_message_text(
-                "Использование: /admin_create <тип> <кол-во> <дни> <лимит>\n"
-                "Пример: /admin_create premium 5 365 100",
+                "Использование: /admin_create <тип> <кол-во> <лимит>\n"
+                "Пример: /admin_create premium 5 100\n\n"
+                "Тип: trial или premium",
                 reply_markup=get_admin_keyboard()
             )
         
@@ -1576,7 +1567,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "/admin_stats - общая статистика\n"
                 "/admin_links - количество ссылок в пуле\n"
                 "/admin_users - список пользователей\n"
-                "/admin_create <тип> <кол-во> <дни> <лимит> - создать ключи\n"
+                "/admin_create <тип> <кол-во> <лимит> - создать бессрочные ключи\n"
                 "/admin_deactivate <ключ> - деактивировать ключ\n"
                 "/admin_activate <ключ> - активировать ключ\n"
                 "/admin_refill <ключ> <количество> - пополнить остаток\n"
@@ -1589,6 +1580,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "/admin_list_screenshots - список скриншотов\n"
                 "/admin_del_screenshot <ID> - удалить скриншот\n"
                 "/admin_all_keys - показать все ключи\n"
+                "/admin_delete_unused - удалить неиспользуемые ключи\n"
                 "/admin_confirm_delete_key <ключ> - удалить ключ с подтверждением\n"
                 "/admin_help - это сообщение",
                 reply_markup=get_admin_keyboard()
@@ -1673,7 +1665,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "cancel_delkey":
             await query.edit_message_text("❌ Удаление ключа отменено", reply_markup=get_admin_keyboard())
         
-        # ========== НОВАЯ КНОПКА ДЛЯ УДАЛЕНИЯ НЕИСПОЛЬЗУЕМЫХ КЛЮЧЕЙ ==========
         elif data == "admin_delete_unused":
             keys = load_keys()
             unused_keys = []
@@ -1720,7 +1711,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Удаление отменено", reply_markup=get_admin_keyboard())
     
     else:
-        # Если пользователь не админ и нажал на админ-кнопку
         await query.edit_message_text("⛔ Доступ запрещён", reply_markup=get_main_keyboard())
 
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
