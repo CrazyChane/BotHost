@@ -367,6 +367,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /get - получить случайную ссылку
 /stat - статистика по всем вашим ключам
 /history - история всех полученных ссылок
+/info - Полная информация
 /help - это сообщение
 
 🎉 По всем вопросам обращайтесь:
