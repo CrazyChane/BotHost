@@ -165,9 +165,6 @@ def validate_key_logic(key, user_id=None):
         info = keys[key]
         if not info.get('active', True):
             return {"success": False, "message": "Ключ деактивирован"}
-        expires = datetime.datetime.strptime(info['expires'], "%Y-%m-%d")
-        if expires < datetime.datetime.now():
-            return {"success": False, "message": "Срок действия истёк"}
 
         owner_id = info.get('owner_id')
         if owner_id is not None and owner_id != user_id:
@@ -210,10 +207,9 @@ def get_link_logic(owner_id):
     try:
         user_keys = load_user_keys(owner_id)
         active = []
-        today = datetime.datetime.now().date()
         for uk in user_keys:
-            expires = datetime.datetime.strptime(uk['expires'], "%Y-%m-%d").date()
-            if expires >= today and uk['remaining_links'] > 0:
+            # Проверяем только остаток ссылок (без проверки времени)
+            if uk['remaining_links'] > 0:
                 active.append(uk)
         if not active:
             return {"success": False, "message": "Нет доступных ссылок"}
@@ -1684,6 +1680,47 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # Если пользователь не админ и нажал на админ-кнопку
         await query.edit_message_text("⛔ Доступ запрещён", reply_markup=get_main_keyboard())
+        elif data == "admin_delete_unused":
+    # Показываем подтверждение удаления неиспользуемых ключей
+    keys = load_keys()
+    unused_keys = []
+    for key_text, info in keys.items():
+        if info.get('owner_id') is None:
+            unused_keys.append(key_text)
+    
+    if not unused_keys:
+        await query.edit_message_text("📭 Нет неиспользуемых ключей для удаления", reply_markup=get_admin_keyboard())
+        return
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Да, удалить все", callback_data="confirm_delete_unused"),
+            InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_unused")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"⚠️ Найдено **{len(unused_keys)}** неиспользуемых ключей.\n\n"
+        "Они будут удалены безвозвратно.\n"
+        "Вы уверены?",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+
+elif data == "confirm_delete_unused":
+    keys = load_keys()
+    deleted_count = 0
+    for key_text, info in keys.items():
+        if info.get('owner_id') is None:
+            try:
+                supabase.table('keys').delete().eq('key_text', key_text).execute()
+                deleted_count += 1
+            except Exception as e:
+                print(f"❌ Ошибка удаления {key_text}: {e}")
+    await query.edit_message_text(f"✅ Удалено **{deleted_count}** неиспользуемых ключей!", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+
+elif data == "cancel_delete_unused":
+    await query.edit_message_text("❌ Удаление отменено", reply_markup=get_admin_keyboard())
 
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
 bot_app = Application.builder().token(BOT_TOKEN).build()
@@ -1712,6 +1749,7 @@ bot_app.add_handler(CommandHandler("admin_add_screenshot", admin_add_screenshot)
 bot_app.add_handler(CommandHandler("admin_list_screenshots", admin_list_screenshots))
 bot_app.add_handler(CommandHandler("admin_del_screenshot", admin_del_screenshot))
 bot_app.add_handler(CommandHandler("admin_all_keys", admin_all_keys))
+bot_app.add_handler(CommandHandler("admin_delete_unused", admin_delete_unused_keys))
 bot_app.add_handler(CommandHandler("admin_confirm_delete_key", admin_confirm_delete_key))
 bot_app.add_handler(CallbackQueryHandler(deleteuser_callback, pattern="^(confirm_deluser_|cancel_deluser)"))
 bot_app.add_handler(CallbackQueryHandler(button_callback))
