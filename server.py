@@ -709,7 +709,6 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_keys = load_user_keys()
     users_dict = {}
     
-    # Собираем данные по пользователям
     for uk in user_keys:
         uid = uk.get('owner_id')
         if uid:
@@ -1440,7 +1439,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 👤 По всем вопросам: @user123311a"""
         await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
     
-# ========== АДМИН-КНОПКИ (только для администратора) ==========
+    # ========== АДМИН-КНОПКИ (только для администратора) ==========
     elif is_admin(user_id):
         if data == "admin_stats":
             try:
@@ -1485,8 +1484,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += "\n"
             
             await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
-    
-    await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
         
         elif data == "admin_create":
             await query.edit_message_text(
@@ -1735,6 +1732,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Удаление отменено", reply_markup=get_admin_keyboard())
     
     else:
+        # Если пользователь не админ и нажал на админ-кнопку
         await query.edit_message_text("⛔ Доступ запрещён", reply_markup=get_main_keyboard())
 
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
