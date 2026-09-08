@@ -399,12 +399,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 3️⃣ Получите ключ и активируйте его командой /key
 
 💰 Стоимость ключа:
-• 1 ключ на 5 использований — 100 ₽
+• 1 ключ на 5 использований — 50 ₽
 • По вопросам оптовых закупок — пишите @user123311a
 
 🎉 По всем вопросам обращайтесь:
 @user123311a"""
-    
+
     if is_admin(update.effective_user.id):
         await update.message.reply_text(text, reply_markup=get_admin_keyboard())
     else:
@@ -1102,10 +1102,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает нажатие на инлайн-кнопки"""
     query = update.callback_query
     await query.answer()
-    
+
     data = query.data
     user_id = update.effective_user.id
-    
+
     # Обработка статуса ссылки (да/нет)
     if data.startswith("status_"):
         status = data.split("_")[1]
@@ -1125,7 +1125,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=get_main_keyboard()
             )
         return
-    
+
     # Обработка остальных кнопок
     if data == "start":
         if is_admin(user_id):
@@ -1138,7 +1138,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "👋 Главное меню NFAvpn!",
                 reply_markup=get_main_keyboard()
             )
-    
+
     elif data == "info":
         text = """📋 **Информация о NFAvpn**
 
@@ -1146,7 +1146,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔄 **Гарантия:** Если ни одна ссылка не работает — выдаём новый ключ бесплатно!
 👤 **Админ:** @user123311a"""
         await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
-    
+
     elif data == "stats":
         result = stats_logic(user_id)
         if result.get("success"):
@@ -1157,7 +1157,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
         else:
             await query.edit_message_text("❌ Не удалось получить статистику", reply_markup=get_main_keyboard())
-    
+
     elif data == "history":
         result = history_logic(user_id)
         if result.get("success"):
@@ -1176,7 +1176,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.edit_message_text(f"❌ {result.get('message', 'ошибка')}", reply_markup=get_main_keyboard())
-    
+
     elif data == "help":
         text = """❓ **Помощь**
 
@@ -1189,29 +1189,79 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 👤 По всем вопросам: @user123311a"""
         await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
-    
-    # Админ-кнопки
-    elif data == "admin_stats":
-        await admin_stats(update, context)
-    elif data == "admin_users":
-        await admin_users(update, context)
-    elif data == "admin_create":
-        await update.message.reply_text(
-            "Использование: /admin_create <тип> <кол-во> <дни> <лимит>\n"
-            "Пример: /admin_create premium 5 365 100",
-            reply_markup=get_admin_keyboard()
-        )
-    elif data == "admin_addlinks":
-        await admin_addlinks(update, context)
-    elif data == "admin_screenshots":
-        await admin_list_screenshots(update, context)
-    elif data == "admin_get":
-        await update.message.reply_text(
-            "Укажите количество ссылок:\n"
-            "/admin_get <количество>\n\n"
-            "Пример: /admin_get 5",
-            reply_markup=get_admin_keyboard()
-        )
+
+    # ========== АДМИН-КНОПКИ (только для администратора) ==========
+    elif is_admin(user_id):
+        if data == "admin_stats":
+            try:
+                keys_all = load_keys()
+                user_keys_all = load_user_keys()
+                users = set(uk['owner_id'] for uk in user_keys_all if uk.get('owner_id'))
+                total_links = len(load_links())
+                user_data_all = load_data()
+                total_issued = sum(len(data.get('used_links', [])) for data in user_data_all.values())
+                text = (
+                    f"📊 Общая статистика:\n"
+                    f"Всего ключей: {len(keys_all)}\n"
+                    f"Пользователей: {len(users)}\n"
+                    f"Ссылок в пуле: {total_links}\n"
+                    f"Выдано ссылок: {total_issued}"
+                )
+                await query.edit_message_text(text, reply_markup=get_admin_keyboard())
+            except Exception as e:
+                await query.edit_message_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
+
+        elif data == "admin_users":
+            user_keys = load_user_keys()
+            users_dict = {}
+            for uk in user_keys:
+                uid = uk.get('owner_id')
+                if uid:
+                    users_dict[uid] = users_dict.get(uid, 0) + 1
+            if not users_dict:
+                await query.edit_message_text("Нет пользователей", reply_markup=get_admin_keyboard())
+                return
+            text = "👥 Пользователи:\n"
+            for uid, count in users_dict.items():
+                text += f"{uid} – {count} ключей\n"
+            await query.edit_message_text(text, reply_markup=get_admin_keyboard())
+
+        elif data == "admin_create":
+            await query.edit_message_text(
+                "Использование: /admin_create <тип> <кол-во> <дни> <лимит>\n"
+                "Пример: /admin_create premium 5 365 100",
+                reply_markup=get_admin_keyboard()
+            )
+
+        elif data == "admin_addlinks":
+            await query.edit_message_text(
+                "📤 Отправьте файл .txt со ссылками или текст",
+                reply_markup=get_admin_keyboard()
+            )
+            context.user_data['waiting_links'] = True
+
+        elif data == "admin_screenshots":
+            screenshots = load_screenshots()
+            if not screenshots:
+                await query.edit_message_text("📭 Нет сохранённых скриншотов", reply_markup=get_admin_keyboard())
+                return
+            text = "📸 **Список скриншотов:**\n\n"
+            for s in screenshots:
+                text += f"🆔 ID: `{s['id']}` — {s['name']}\n"
+            text += "\n🗑️ Чтобы удалить, отправьте:\n`/admin_del_screenshot <ID>`"
+            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+
+        elif data == "admin_get":
+            await query.edit_message_text(
+                "Укажите количество ссылок:\n"
+                "/admin_get <количество>\n\n"
+                "Пример: /admin_get 5",
+                reply_markup=get_admin_keyboard()
+            )
+
+    else:
+        # Если пользователь не админ и нажал на админ-кнопку
+        await query.edit_message_text("⛔ Доступ запрещён", reply_markup=get_main_keyboard())
 
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
 bot_app = Application.builder().token(BOT_TOKEN).build()
