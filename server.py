@@ -365,7 +365,7 @@ def get_main_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 def get_admin_keyboard():
-    """Главное меню для администратора"""
+    """Главное меню для администратора (все команды)"""
     keyboard = [
         [
             InlineKeyboardButton("📊 Общая статистика", callback_data="admin_stats"),
@@ -376,12 +376,27 @@ def get_admin_keyboard():
             InlineKeyboardButton("📤 Добавить ссылки", callback_data="admin_addlinks")
         ],
         [
+            InlineKeyboardButton("📎 Количество ссылок", callback_data="admin_links"),
+            InlineKeyboardButton("🏆 Топ пользователей", callback_data="admin_linkstats")
+        ],
+        [
             InlineKeyboardButton("🖼️ Скриншоты", callback_data="admin_screenshots"),
             InlineKeyboardButton("📎 Выдать ссылки", callback_data="admin_get")
         ],
         [
-            InlineKeyboardButton("🏠 Главное меню", callback_data="start"),
-            InlineKeyboardButton("❓ Помощь", callback_data="help")
+            InlineKeyboardButton("🔓 Активировать ключ", callback_data="admin_activate"),
+            InlineKeyboardButton("🔒 Деактивировать ключ", callback_data="admin_deactivate")
+        ],
+        [
+            InlineKeyboardButton("🔄 Пополнить ключ", callback_data="admin_refill"),
+            InlineKeyboardButton("🗑️ Удалить ключ", callback_data="admin_deletekey")
+        ],
+        [
+            InlineKeyboardButton("👤 Удалить пользователя", callback_data="admin_deleteuser"),
+            InlineKeyboardButton("📋 Помощь", callback_data="admin_help")
+        ],
+        [
+            InlineKeyboardButton("🏠 Главное меню", callback_data="start")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -1258,7 +1273,90 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Пример: /admin_get 5",
                 reply_markup=get_admin_keyboard()
             )
+            elif data == "admin_links":
+            links = load_links()
+            await query.edit_message_text(f"🔗 Всего ссылок в пуле: {len(links)}", reply_markup=get_admin_keyboard())
 
+        elif data == "admin_linkstats":
+            try:
+                response = supabase.table('user_data').select('owner_id, used_links').execute()
+                stats = {}
+                for row in response.data:
+                    uid = row.get('owner_id')
+                    if uid:
+                        stats[uid] = stats.get(uid, 0) + len(row.get('used_links', []))
+                sorted_users = sorted(stats.items(), key=lambda x: x[1], reverse=True)
+                if not sorted_users:
+                    await query.edit_message_text("Нет данных", reply_markup=get_admin_keyboard())
+                    return
+                text = "🏆 Топ пользователей по выданным ссылкам:\n"
+                for idx, (uid, count) in enumerate(sorted_users[:10], 1):
+                    text += f"{idx}. {uid} – {count} ссылок\n"
+                await query.edit_message_text(text, reply_markup=get_admin_keyboard())
+            except Exception as e:
+                await query.edit_message_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
+
+        elif data == "admin_activate":
+            await query.edit_message_text(
+                "🔓 Активировать ключ:\n"
+                "/admin_activate <ключ>\n\n"
+                "Пример: /admin_activate FREE-2024-ABCD",
+                reply_markup=get_admin_keyboard()
+            )
+
+        elif data == "admin_deactivate":
+            await query.edit_message_text(
+                "🔒 Деактивировать ключ:\n"
+                "/admin_deactivate <ключ>\n\n"
+                "Пример: /admin_deactivate FREE-2024-ABCD",
+                reply_markup=get_admin_keyboard()
+            )
+
+        elif data == "admin_refill":
+            await query.edit_message_text(
+                "🔄 Пополнить остаток ссылок:\n"
+                "/admin_refill <ключ> <количество>\n\n"
+                "Пример: /admin_refill FREE-2024-ABCD 10",
+                reply_markup=get_admin_keyboard()
+            )
+
+        elif data == "admin_deletekey":
+            await query.edit_message_text(
+                "🗑️ Удалить ключ:\n"
+                "/admin_deletekey <ключ>\n\n"
+                "Пример: /admin_deletekey FREE-2024-ABCD",
+                reply_markup=get_admin_keyboard()
+            )
+
+        elif data == "admin_deleteuser":
+            await query.edit_message_text(
+                "👤 Удалить пользователя:\n"
+                "/admin_deleteuser <user_id>\n\n"
+                "Пример: /admin_deleteuser 741695652",
+                reply_markup=get_admin_keyboard()
+            )
+
+        elif data == "admin_help":
+            await query.edit_message_text(
+                "🔐 Админ-команды:\n\n"
+                "/admin_stats - общая статистика\n"
+                "/admin_links - количество ссылок в пуле\n"
+                "/admin_users - список пользователей\n"
+                "/admin_create <тип> <кол-во> <дни> <лимит> - создать ключи\n"
+                "/admin_deactivate <ключ> - деактивировать ключ\n"
+                "/admin_activate <ключ> - активировать ключ\n"
+                "/admin_refill <ключ> <количество> - пополнить остаток\n"
+                "/admin_deletekey <ключ> - удалить ключ\n"
+                "/admin_deleteuser <user_id> - удалить пользователя\n"
+                "/admin_addlinks - добавить ссылки (файл или текст)\n"
+                "/admin_linkstats - топ пользователей\n"
+                "/admin_get <количество> - получить N ссылок без ключа\n"
+                "/admin_add_screenshot - добавить скриншот для /info\n"
+                "/admin_list_screenshots - список скриншотов\n"
+                "/admin_del_screenshot <ID> - удалить скриншот\n"
+                "/admin_help - это сообщение",
+                reply_markup=get_admin_keyboard()
+            )
     else:
         # Если пользователь не админ и нажал на админ-кнопку
         await query.edit_message_text("⛔ Доступ запрещён", reply_markup=get_main_keyboard())
