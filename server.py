@@ -1440,7 +1440,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 👤 По всем вопросам: @user123311a"""
         await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
     
-    # ========== АДМИН-КНОПКИ (только для администратора) ==========
+# ========== АДМИН-КНОПКИ (только для администратора) ==========
     elif is_admin(user_id):
         if data == "admin_stats":
             try:
@@ -1461,28 +1461,30 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await query.edit_message_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
         
-elif data == "admin_users":
-    user_keys = load_user_keys()
-    users_dict = {}
-    
-    for uk in user_keys:
-        uid = uk.get('owner_id')
-        if uid:
-            if uid not in users_dict:
-                users_dict[uid] = []
-            users_dict[uid].append(uk['key_text'])
-    
-    if not users_dict:
-        await query.edit_message_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
-        return
-    
-    text = "👥 **Пользователи и их ключи:**\n\n"
-    
-    for uid, keys in users_dict.items():
-        text += f"**🆔 {uid}** — {len(keys)} ключей\n"
-        for key in keys:
-            text += f"  🔑 `{key}`\n"
-        text += "\n"
+        elif data == "admin_users":
+            user_keys = load_user_keys()
+            users_dict = {}
+            
+            for uk in user_keys:
+                uid = uk.get('owner_id')
+                if uid:
+                    if uid not in users_dict:
+                        users_dict[uid] = []
+                    users_dict[uid].append(uk['key_text'])
+            
+            if not users_dict:
+                await query.edit_message_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
+                return
+            
+            text = "👥 **Пользователи и их ключи:**\n\n"
+            
+            for uid, keys in users_dict.items():
+                text += f"**🆔 {uid}** — {len(keys)} ключей\n"
+                for key in keys:
+                    text += f"  🔑 `{key}`\n"
+                text += "\n"
+            
+            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
     
     await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
         
