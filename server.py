@@ -1,5 +1,533 @@
+import os
+import random
+import datetime
+import asyncio
+import tempfile
+import string
+import secrets
+import json
+import sys
+import traceback
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from supabase import create_client, Client
 
-3️⃣ **Нажмите Enter** — ключ активирован!
+# ========== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ==========
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "741695652"))
+
+# ========== ПРОВЕРКА ПЕРЕМЕННЫХ ==========
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN не задан в переменных окружения!")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("❌ SUPABASE_URL и SUPABASE_KEY должны быть заданы!")
+
+print("🚀 СТАРТ: server.py загружен")
+print(f"BOT_TOKEN: {'✅ есть' if BOT_TOKEN else '❌ НЕТ!'}")
+print(f"SUPABASE_URL: {'✅ есть' if SUPABASE_URL else '❌ НЕТ!'}")
+print(f"🔑 ADMIN_ID: {ADMIN_ID}")
+
+# ========== ПОДКЛЮЧЕНИЕ К SUPABASE ==========
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ========== ПРОВЕРКА СТРУКТУРЫ ТАБЛИЦ ==========
+def ensure_tables():
+    try:
+        supabase.table('keys').select('owner_id').limit(1).execute()
+        print("✅ Таблицы в порядке")
+    except Exception as e:
+        if 'column "owner_id" does not exist' in str(e):
+            print("⚠️ Добавляем колонку owner_id...")
+            try:
+                supabase.sql("ALTER TABLE keys ADD COLUMN owner_id BIGINT DEFAULT NULL").execute()
+                print("✅ Колонка добавлена")
+            except Exception as err:
+                print(f"❌ Ошибка добавления колонки: {err}")
+        else:
+            print(f"⚠️ Ошибка проверки таблиц: {e}")
+
+# ========== РАБОТА С БАЗОЙ ДАННЫХ ==========
+def load_keys():
+    try:
+        response = supabase.table('keys').select('*').execute()
+        keys_dict = {}
+        for row in response.data:
+            key_text = row.pop('key_text')
+            if 'owner_id' not in row:
+                row['owner_id'] = None
+            keys_dict[key_text] = row
+        return keys_dict
+    except Exception as e:
+        print(f"❌ load_keys: {e}")
+        return {}
+
+def load_user_keys(owner_id=None):
+    try:
+        query = supabase.table('user_keys').select('*')
+        if owner_id is not None:
+            query = query.eq('owner_id', owner_id)
+        response = query.execute()
+        return response.data
+    except Exception as e:
+        print(f"❌ load_user_keys: {e}")
+        return []
+
+def save_user_key(key_text, owner_id, remaining_links, expires):
+    try:
+        supabase.table('user_keys').insert({
+            'key_text': key_text,
+            'owner_id': owner_id,
+            'remaining_links': remaining_links,
+            'expires': expires
+        }).execute()
+        return True
+    except Exception as e:
+        print(f"❌ save_user_key: {e}")
+        return False
+
+def update_user_key_remaining(key_text, owner_id, new_remaining):
+    try:
+        supabase.table('user_keys')\
+            .update({'remaining_links': new_remaining})\
+            .eq('key_text', key_text)\
+            .eq('owner_id', owner_id)\
+            .execute()
+        print(f"🔄 Остаток {key_text}: {new_remaining}")
+        return True
+    except Exception as e:
+        print(f"❌ update_user_key_remaining: {e}")
+        return False
+
+def load_data(owner_id=None):
+    try:
+        query = supabase.table('user_data').select('*')
+        if owner_id is not None:
+            query = query.eq('owner_id', owner_id)
+        response = query.execute()
+        data_dict = {}
+        for row in response.data:
+            key_text = row['key_text']
+            data_dict[key_text] = {
+                'used_links': row.get('used_links', []),
+                'links_history': row.get('links_history', []),
+                'activated': row.get('activated', '')
+            }
+        return data_dict
+    except Exception as e:
+        print(f"❌ load_data: {e}")
+        return {}
+
+def save_data(data_dict, owner_id):
+    for key_text, data in data_dict.items():
+        try:
+            supabase.table('user_data').upsert({
+                'key_text': key_text,
+                'owner_id': owner_id,
+                'used_links': data.get('used_links', []),
+                'links_history': data.get('links_history', []),
+                'activated': data.get('activated', datetime.datetime.now().isoformat())
+            }).execute()
+        except Exception as e:
+            print(f"❌ save_data: {e}")
+
+def load_links():
+    try:
+        response = supabase.table('links').select('url').execute()
+        links = [row['url'] for row in response.data]
+        print(f"🔗 Загружено {len(links)} ссылок")
+        return links
+    except Exception as e:
+        print(f"❌ load_links: {e}")
+        return []
+
+def add_links_to_db(links_list):
+    added = 0
+    for url in links_list:
+        url = url.strip()
+        if url:
+            try:
+                supabase.table('links').insert({'url': url}).execute()
+                added += 1
+            except Exception as e:
+                print(f"⚠️ Ошибка добавления {url}: {e}")
+    return added
+
+# ========== БИЗНЕС-ЛОГИКА ==========
+def validate_key_logic(key, user_id=None):
+    try:
+        if not key:
+            return {"success": False, "message": "Ключ не указан"}
+        keys = load_keys()
+        if key not in keys:
+            return {"success": False, "message": "Неверный ключ"}
+        info = keys[key]
+        if not info.get('active', True):
+            return {"success": False, "message": "Ключ деактивирован"}
+        expires = datetime.datetime.strptime(info['expires'], "%Y-%m-%d")
+        if expires < datetime.datetime.now():
+            return {"success": False, "message": "Срок действия истёк"}
+
+        owner_id = info.get('owner_id')
+        if owner_id is not None and owner_id != user_id:
+            return {"success": False, "message": "Ключ уже активирован на другом аккаунте"}
+
+        if owner_id is None:
+            try:
+                supabase.table('keys').update({'owner_id': user_id}).eq('key_text', key).execute()
+                info['owner_id'] = user_id
+                print(f"✅ Ключ {key} привязан к {user_id}")
+            except Exception as e:
+                print(f"❌ Ошибка привязки: {e}")
+                return {"success": False, "message": "Ошибка привязки ключа"}
+
+        user_keys = load_user_keys(user_id)
+        if user_keys is not None:
+            for uk in user_keys:
+                if uk.get('key_text') == key:
+                    return {"success": False, "message": "Ключ уже активирован вами"}
+
+        max_links = info.get('max_links', 0)
+        if max_links <= 0:
+            return {"success": False, "message": "Нет доступных ссылок в ключе"}
+        success = save_user_key(key, user_id, max_links, info['expires'])
+        if not success:
+            return {"success": False, "message": "Ошибка активации ключа"}
+
+        return {
+            "success": True,
+            "type": info['type'],
+            "expires": info['expires'],
+            "max_links": max_links,
+            "message": f"Ключ активирован! Добавлено {max_links} ссылок."
+        }
+    except Exception as e:
+        print(f"❌ validate_key_logic: {e}")
+        return {"success": False, "message": f"Ошибка: {e}"}
+
+def get_link_logic(owner_id):
+    try:
+        user_keys = load_user_keys(owner_id)
+        active = []
+        today = datetime.datetime.now().date()
+        for uk in user_keys:
+            expires = datetime.datetime.strptime(uk['expires'], "%Y-%m-%d").date()
+            if expires >= today and uk['remaining_links'] > 0:
+                active.append(uk)
+        if not active:
+            return {"success": False, "message": "Нет доступных ссылок"}
+
+        chosen = max(active, key=lambda x: x['remaining_links'])
+        key_text = chosen['key_text']
+        new_remaining = chosen['remaining_links'] - 1
+        update_user_key_remaining(key_text, owner_id, new_remaining)
+
+        all_links = load_links()
+        if not all_links:
+            return {"success": False, "message": "Нет доступных ссылок"}
+
+        chosen_link = random.choice(all_links)
+        try:
+            supabase.table('links').delete().eq('url', chosen_link).execute()
+            print(f"✅ Выдана ссылка: {chosen_link}")
+        except Exception as e:
+            print(f"❌ Ошибка удаления: {e}")
+            return {"success": False, "message": "Ошибка при выдаче"}
+
+        user_data = load_data(owner_id)
+        if key_text not in user_data:
+            user_data[key_text] = {'used_links': [], 'links_history': []}
+        user_data[key_text]['used_links'].append(chosen_link)
+        user_data[key_text]['links_history'].append({
+            'link': chosen_link,
+            'status': 'pending',
+            'timestamp': datetime.datetime.now().isoformat()
+        })
+        save_data(user_data, owner_id)
+
+        return {"success": True, "link": chosen_link, "remaining": new_remaining, "key": key_text}
+    except Exception as e:
+        print(f"❌ get_link_logic: {e}")
+        return {"success": False, "message": f"Ошибка: {e}"}
+
+def set_status_logic(key_text, owner_id, status):
+    if not key_text or status not in ('да', 'нет'):
+        return {"success": False, "message": "Некорректные данные"}
+    user_data = load_data(owner_id)
+    if key_text not in user_data or not user_data[key_text]['links_history']:
+        return {"success": False, "message": "Нет ссылок для обновления"}
+    last = user_data[key_text]['links_history'][-1]
+    if last['status'] != 'pending':
+        return {"success": False, "message": "Статус уже установлен"}
+    last['status'] = status
+    save_data(user_data, owner_id)
+    return {"success": True, "message": "Статус обновлён"}
+
+def history_logic(owner_id):
+    try:
+        if not owner_id:
+            return {"success": False, "message": "Пользователь не указан"}
+        response = supabase.table('user_data')\
+            .select('links_history')\
+            .eq('owner_id', owner_id)\
+            .execute()
+        all_history = []
+        for row in response.data:
+            all_history.extend(row.get('links_history', []))
+        all_history.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        return {"success": True, "history": all_history}
+    except Exception as e:
+        print(f"❌ history_logic: {e}")
+        return {"success": False, "message": "Не удалось загрузить историю"}
+
+def stats_logic(owner_id):
+    user_keys = load_user_keys(owner_id)
+    total_remaining = 0
+    active_keys = []
+    today = datetime.datetime.now().date()
+    for uk in user_keys:
+        expires = datetime.datetime.strptime(uk['expires'], "%Y-%m-%d").date()
+        if expires >= today:
+            active_keys.append(uk)
+            total_remaining += uk['remaining_links']
+    total_links_available = len(load_links())
+    return {
+        "success": True,
+        "total_remaining": total_remaining,
+        "active_keys_count": len(active_keys),
+        "total_links_available": total_links_available,
+        "keys_info": active_keys
+    }
+
+# ========== АДМИН-ФУНКЦИИ ==========
+def is_admin(user_id):
+    return user_id == ADMIN_ID
+
+def generate_key_string(key_type, days, max_links):
+    prefix = "FREE" if key_type == 'trial' else "PREMIUM"
+    year = datetime.datetime.now().year
+    random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+    key = f"{prefix}-{year}-{random_part}"
+    expiry_date = (datetime.datetime.now() + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+    return key, expiry_date
+
+def admin_create_key(key_type, days, max_links):
+    key, expires = generate_key_string(key_type, days, max_links)
+    try:
+        supabase.table('keys').insert({
+            'key_text': key,
+            'type': key_type,
+            'expires': expires,
+            'max_links': max_links,
+            'active': True,
+            'created': datetime.datetime.now().isoformat()
+        }).execute()
+        return key
+    except Exception as e:
+        print(f"❌ admin_create_key: {e}")
+        return None
+
+def admin_generate_multiple(count, key_type, days, max_links):
+    created = []
+    for _ in range(count):
+        key = admin_create_key(key_type, days, max_links)
+        if key:
+            created.append(key)
+    return created
+
+def admin_delete_user(user_id):
+    try:
+        result1 = supabase.table('user_keys').delete().eq('owner_id', user_id).execute()
+        result2 = supabase.table('user_data').delete().eq('owner_id', user_id).execute()
+        return len(result1.data) + len(result2.data)
+    except Exception as e:
+        print(f"❌ admin_delete_user: {e}")
+        return 0
+
+# ========== ТЕЛЕГРАМ-ОБРАБОТЧИКИ ==========
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        """👋 Добро пожаловать в NFAvpn!
+
+Вы можете активировать несколько ключей на одном аккаунте.
+Каждый ключ добавляет свой лимит ссылок.
+
+📌 Как получить ключ:
+1️⃣ Напишите администратору: @user123311a
+2️⃣ Оформите заказ, оплатите
+3️⃣ Получите ключ и активируйте его командой /key
+
+💰 Стоимость ключа:
+• 1 ключ на 5 использований — 50 ₽
+• По вопросам оптовых закупок — пишите @user123311a
+
+Команды:
+/key ВАШ_КЛЮЧ - активировать ключ
+/get - получить случайную ссылку
+/stat - статистика по всем вашим ключам
+/history - история всех полученных ссылок
+/help - это сообщение
+
+🎉 По всем вопросам обращайтесь:
+@user123311a"""
+    )
+
+async def set_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        args = context.args
+        if not args:
+            await update.message.reply_text("❌ Укажите ключ после команды, например:\n/key FREE-2024-ABCD")
+            return
+        key = args[0].strip()
+        user_id = update.effective_user.id
+        result = validate_key_logic(key, user_id)
+        if not result.get("success"):
+            await update.message.reply_text(f"❌ Ошибка: {result.get('message', 'неизвестная')}")
+            return
+        await update.message.reply_text(
+            f"✅ {result['message']}\n"
+            f"Тип: {result['type']}\n"
+            f"Действителен до: {result['expires']}\n"
+            f"Добавлено ссылок: {result['max_links']}"
+        )
+    except Exception as e:
+        print(f"❌ set_key: {e}")
+        await update.message.reply_text("❌ Произошла внутренняя ошибка. Попробуйте позже.")
+
+async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    result = get_link_logic(user_id)
+    if not result.get("success"):
+        await update.message.reply_text(f"❌ {result.get('message', 'ошибка')}")
+        return
+    link = result["link"]
+    key = result["key"]
+    remaining = result["remaining"]
+    context.user_data["last_key"] = key
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Работает", callback_data="status_да"),
+            InlineKeyboardButton("❌ Не работает", callback_data="status_нет"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        f"📎 Ваша ссылка:\n{link}\n\n"
+        f"Осталось ссылок по этому ключу: {remaining}\n"
+        f"Пожалуйста, укажите, работает ли она:",
+        reply_markup=reply_markup
+    )
+
+async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    status = query.data.split("_")[1]
+    key = context.user_data.get("last_key")
+    if not key:
+        await query.edit_message_text("❌ Не найден ключ для обновления статуса.")
+        return
+    user_id = update.effective_user.id
+    result = set_status_logic(key, user_id, status)
+    if result.get("success"):
+        await query.edit_message_text(f"✅ Статус сохранён: {'работает' if status == 'да' else 'не работает'}")
+    else:
+        await query.edit_message_text(f"❌ Ошибка: {result.get('message', '')}")
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    result = stats_logic(user_id)
+    if not result.get("success"):
+        await update.message.reply_text("❌ Не удалось получить статистику")
+        return
+    text = f"📊 Ваша статистика:\n"
+    text += f"Всего активных ключей: {result['active_keys_count']}\n"
+    text += f"Осталось ссылок: {result['total_remaining']}\n"
+    text += f"Всего доступно ссылок на сервере: {result['total_links_available']}\n\n"
+    if result['keys_info']:
+        text += "🔑 Детали по ключам:\n"
+        for uk in result['keys_info']:
+            text += f"  {uk['key_text']} – осталось {uk['remaining_links']} ссылок, до {uk['expires']}\n"
+    await update.message.reply_text(text)
+
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    result = history_logic(user_id)
+    if not result.get("success"):
+        await update.message.reply_text(f"❌ {result.get('message', 'ошибка')}")
+        return
+    history_list = result.get("history", [])
+    if not history_list:
+        await update.message.reply_text("📭 История пуста")
+        return
+    lines = []
+    for i, entry in enumerate(history_list[:10], 1):
+        emoji = "✅" if entry["status"] == "да" else ("❌" if entry["status"] == "нет" else "⏳")
+        lines.append(f"{i}. {entry['link']} {emoji} ({entry['timestamp'][:16]})")
+    await update.message.reply_text("📜 Последние 10 ссылок:\n" + "\n".join(lines))
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "📖 Доступные команды:\n"
+        "/key <ключ> - активировать новый ключ\n"
+        "/get - получить ссылку\n"
+        "/stat - статистика по всем вашим ключам\n"
+        "/history - история всех полученных ссылок\n"
+        "/info - полная информация о покупке и активации ключей\n"
+        "/help - это сообщение\n\n"
+        "🎉 По всем вопросам обращайтесь:\n"
+        "@user123311a"
+    )
+    if is_admin(update.effective_user.id):
+        text += "\n\n🔐 Админ-команды:\n/admin_help - список"
+    await update.message.reply_text(text)
+
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Полная информация о покупке ключей"""
+    await update.message.reply_text(
+        """📋 **NFAvpn — информация о покупке ключей**
+
+---
+
+**🔑 Как получить ключ:**
+
+1. Напишите администратору: @user123311a
+2. Оформите заказ:
+   • Укажите нужное количество ключей
+   • Получите реквизиты для оплаты
+3. Оплатите заказ
+4. Получите ключ(и) и активируйте их командой /key
+
+---
+
+**💰 Стоимость:**
+
+• 1 ключ на **5 использований** — **50 ₽**
+• По вопросам оптовых закупок — пишите @user123311a
+
+---
+
+**🔄 Гарантия возврата:**
+
+Если **ни одна** из 5 ссылок по вашему ключу не работает:
+→ Мы выдаём **новый ключ** на 5 использований **бесплатно**!
+
+Условия:
+• Проверьте все 5 ссылок
+• Если ни одна не работает — напишите @user123311a
+• Приложите скриншоты (для подтверждения)
+• Мы выдадим новый ключ
+
+---
+
+**📱 Как активировать ключ:**
+
+Следуйте инструкции:
+
+1. **Скопируйте ключ**, который получили от администратора
+2. **Вставьте ключ** в бота после команды /key
+
+3. **Нажмите Enter** — ключ активирован!
 
 ---
 
