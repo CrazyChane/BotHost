@@ -954,6 +954,64 @@ async def admin_set_screenshot_name(update: Update, context: ContextTypes.DEFAUL
     if context.user_data.get('waiting_screenshot'):
         context.user_data['screenshot_name'] = update.message.text
         await update.message.reply_text(f"✅ Название сохранено: '{update.message.text}'\nТеперь отправьте изображение.")
+        async def admin_list_screenshots(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать список всех скриншотов"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Доступ запрещён")
+        return
+    
+    screenshots = load_screenshots()
+    if not screenshots:
+        await update.message.reply_text("📭 Нет сохранённых скриншотов")
+        return
+    
+    text = "📸 **Список скриншотов:**\n\n"
+    for s in screenshots:
+        text += f"🆔 ID: `{s['id']}` — {s['name']}\n"
+    text += "\n🗑️ Чтобы удалить, отправьте:\n`/admin_del_screenshot <ID>`"
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def admin_del_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удалить скриншот по ID"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Доступ запрещён")
+        return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "❌ Укажите ID скриншота для удаления:\n"
+            "/admin_del_screenshot <ID>\n\n"
+            "Сначала посмотрите список: /admin_list_screenshots"
+        )
+        return
+    
+    try:
+        screenshot_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID должен быть числом")
+        return
+    
+    # Проверяем, существует ли скриншот
+    screenshots = load_screenshots()
+    exists = False
+    for s in screenshots:
+        if s['id'] == screenshot_id:
+            exists = True
+            name = s['name']
+            break
+    
+    if not exists:
+        await update.message.reply_text(f"❌ Скриншот с ID {screenshot_id} не найден")
+        return
+    
+    # Удаляем
+    success = delete_screenshot(screenshot_id)
+    if success:
+        await update.message.reply_text(f"✅ Скриншот '{name}' (ID: {screenshot_id}) удалён!")
+    else:
+        await update.message.reply_text(f"❌ Ошибка при удалении скриншота")
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
 bot_app = Application.builder().token(BOT_TOKEN).build()
 bot_app.add_handler(CommandHandler("start", start))
@@ -977,12 +1035,13 @@ bot_app.add_handler(CommandHandler("admin_deleteuser", admin_deleteuser))
 bot_app.add_handler(CommandHandler("admin_addlinks", admin_addlinks))
 bot_app.add_handler(CommandHandler("admin_linkstats", admin_linkstats))
 bot_app.add_handler(CommandHandler("admin_get", admin_get))
-bot_app.add_handler(CallbackQueryHandler(deleteuser_callback, pattern="^(confirm_deluser_|cancel_deluser)"))
-bot_app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_links_input))
-bot_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
 bot_app.add_handler(CommandHandler("admin_add_screenshot", admin_add_screenshot))
 bot_app.add_handler(MessageHandler(filters.PHOTO, handle_screenshot_input))
 bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_set_screenshot_name))
+bot_app.add_handler(CallbackQueryHandler(deleteuser_callback, pattern="^(confirm_deluser_|cancel_deluser)"))
+bot_app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_links_input))
+bot_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
+
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     ensure_tables()
