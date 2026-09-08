@@ -511,6 +511,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 1️⃣ **Скопируйте ключ**, который получили от администратора
 2️⃣ **Вставьте ключ** в бота после команды /key
+ )
 
 # ========== АДМИН-КОМАНДЫ ==========
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
