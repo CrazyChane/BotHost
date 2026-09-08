@@ -1205,8 +1205,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 👤 По всем вопросам: @user123311a"""
         await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
 
-    # ========== АДМИН-КНОПКИ (только для администратора) ==========
-    elif is_admin(user_id):
+        # ========== АДМИН-КНОПКИ (только для администратора) ==========
+        elif is_admin(user_id):
         if data == "admin_stats":
             try:
                 keys_all = load_keys()
@@ -1273,7 +1273,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Пример: /admin_get 5",
                 reply_markup=get_admin_keyboard()
             )
-            elif data == "admin_links":
+
+        elif data == "admin_links":
             links = load_links()
             await query.edit_message_text(f"🔗 Всего ссылок в пуле: {len(links)}", reply_markup=get_admin_keyboard())
 
@@ -1357,6 +1358,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "/admin_help - это сообщение",
                 reply_markup=get_admin_keyboard()
             )
+
     else:
         # Если пользователь не админ и нажал на админ-кнопку
         await query.edit_message_text("⛔ Доступ запрещён", reply_markup=get_main_keyboard())
