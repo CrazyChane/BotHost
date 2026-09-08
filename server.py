@@ -399,6 +399,10 @@ def get_admin_keyboard():
             InlineKeyboardButton("📋 Помощь", callback_data="admin_help"),
             InlineKeyboardButton("🏠 Главное меню", callback_data="start")
         ]
+        [
+    InlineKeyboardButton("🗑️ Удалить неиспользуемые", callback_data="admin_delete_unused"),
+    InlineKeyboardButton("👤 Удалить пользователя", callback_data="admin_deleteuser")
+]
     ]
     return InlineKeyboardMarkup(keyboard)
 
