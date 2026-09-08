@@ -345,10 +345,50 @@ def admin_delete_user(user_id):
         print(f"❌ admin_delete_user: {e}")
         return 0
 
+# ========== КНОПКИ ==========
+def get_main_keyboard():
+    """Главное меню для пользователей"""
+    keyboard = [
+        [
+            InlineKeyboardButton("🛒 Купить ключ", url="https://t.me/user123311a"),
+            InlineKeyboardButton("📖 Информация", callback_data="info")
+        ],
+        [
+            InlineKeyboardButton("📊 Статистика", callback_data="stats"),
+            InlineKeyboardButton("📜 История", callback_data="history")
+        ],
+        [
+            InlineKeyboardButton("❓ Помощь", callback_data="help"),
+            InlineKeyboardButton("🏠 Главное меню", callback_data="start")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_admin_keyboard():
+    """Главное меню для администратора"""
+    keyboard = [
+        [
+            InlineKeyboardButton("📊 Общая статистика", callback_data="admin_stats"),
+            InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")
+        ],
+        [
+            InlineKeyboardButton("🔑 Создать ключи", callback_data="admin_create"),
+            InlineKeyboardButton("📤 Добавить ссылки", callback_data="admin_addlinks")
+        ],
+        [
+            InlineKeyboardButton("🖼️ Скриншоты", callback_data="admin_screenshots"),
+            InlineKeyboardButton("📎 Выдать ссылки", callback_data="admin_get")
+        ],
+        [
+            InlineKeyboardButton("🏠 Главное меню", callback_data="start"),
+            InlineKeyboardButton("❓ Помощь", callback_data="help")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 # ========== ТЕЛЕГРАМ-ОБРАБОТЧИКИ ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        """👋 Добро пожаловать в NFAvpn!
+    text = """👋 Добро пожаловать в NFAvpn!
 
 Вы можете активировать несколько ключей на одном аккаунте.
 Каждый ключ добавляет свой лимит ссылок.
@@ -359,48 +399,57 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 3️⃣ Получите ключ и активируйте его командой /key
 
 💰 Стоимость ключа:
-• 1 ключ на 5 использований — 50 ₽
+• 1 ключ на 5 использований — 100 ₽
 • По вопросам оптовых закупок — пишите @user123311a
-
-Команды:
-/key ВАШ_КЛЮЧ - активировать ключ
-/get - получить случайную ссылку
-/stat - статистика по всем вашим ключам
-/history - история всех полученных ссылок
-/info - Полная информация
-/help - это сообщение
 
 🎉 По всем вопросам обращайтесь:
 @user123311a"""
-    )
+    
+    if is_admin(update.effective_user.id):
+        await update.message.reply_text(text, reply_markup=get_admin_keyboard())
+    else:
+        await update.message.reply_text(text, reply_markup=get_main_keyboard())
 
 async def set_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         args = context.args
         if not args:
-            await update.message.reply_text("❌ Укажите ключ после команды, например:\n/key FREE-2024-ABCD")
+            await update.message.reply_text(
+                "❌ Укажите ключ после команды, например:\n/key FREE-2024-ABCD",
+                reply_markup=get_main_keyboard()
+            )
             return
         key = args[0].strip()
         user_id = update.effective_user.id
         result = validate_key_logic(key, user_id)
         if not result.get("success"):
-            await update.message.reply_text(f"❌ Ошибка: {result.get('message', 'неизвестная')}")
+            await update.message.reply_text(
+                f"❌ Ошибка: {result.get('message', 'неизвестная')}",
+                reply_markup=get_main_keyboard()
+            )
             return
         await update.message.reply_text(
             f"✅ {result['message']}\n"
             f"Тип: {result['type']}\n"
             f"Действителен до: {result['expires']}\n"
-            f"Добавлено ссылок: {result['max_links']}"
+            f"Добавлено ссылок: {result['max_links']}",
+            reply_markup=get_main_keyboard()
         )
     except Exception as e:
         print(f"❌ set_key: {e}")
-        await update.message.reply_text("❌ Произошла внутренняя ошибка. Попробуйте позже.")
+        await update.message.reply_text(
+            "❌ Произошла внутренняя ошибка. Попробуйте позже.",
+            reply_markup=get_main_keyboard()
+        )
 
 async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     result = get_link_logic(user_id)
     if not result.get("success"):
-        await update.message.reply_text(f"❌ {result.get('message', 'ошибка')}")
+        await update.message.reply_text(
+            f"❌ {result.get('message', 'ошибка')}",
+            reply_markup=get_main_keyboard()
+        )
         return
     link = result["link"]
     key = result["key"]
@@ -410,6 +459,9 @@ async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton("✅ Работает", callback_data="status_да"),
             InlineKeyboardButton("❌ Не работает", callback_data="status_нет"),
+        ],
+        [
+            InlineKeyboardButton("🏠 Главное меню", callback_data="start")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -426,20 +478,29 @@ async def status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = query.data.split("_")[1]
     key = context.user_data.get("last_key")
     if not key:
-        await query.edit_message_text("❌ Не найден ключ для обновления статуса.")
+        await query.edit_message_text("❌ Не найден ключ для обновления статуса.", reply_markup=get_main_keyboard())
         return
     user_id = update.effective_user.id
     result = set_status_logic(key, user_id, status)
     if result.get("success"):
-        await query.edit_message_text(f"✅ Статус сохранён: {'работает' if status == 'да' else 'не работает'}")
+        await query.edit_message_text(
+            f"✅ Статус сохранён: {'работает' if status == 'да' else 'не работает'}",
+            reply_markup=get_main_keyboard()
+        )
     else:
-        await query.edit_message_text(f"❌ Ошибка: {result.get('message', '')}")
+        await query.edit_message_text(
+            f"❌ Ошибка: {result.get('message', '')}",
+            reply_markup=get_main_keyboard()
+        )
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     result = stats_logic(user_id)
     if not result.get("success"):
-        await update.message.reply_text("❌ Не удалось получить статистику")
+        await update.message.reply_text(
+            "❌ Не удалось получить статистику",
+            reply_markup=get_main_keyboard()
+        )
         return
     text = f"📊 Ваша статистика:\n"
     text += f"Всего активных ключей: {result['active_keys_count']}\n"
@@ -449,23 +510,29 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "🔑 Детали по ключам:\n"
         for uk in result['keys_info']:
             text += f"  {uk['key_text']} – осталось {uk['remaining_links']} ссылок, до {uk['expires']}\n"
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, reply_markup=get_main_keyboard())
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     result = history_logic(user_id)
     if not result.get("success"):
-        await update.message.reply_text(f"❌ {result.get('message', 'ошибка')}")
+        await update.message.reply_text(
+            f"❌ {result.get('message', 'ошибка')}",
+            reply_markup=get_main_keyboard()
+        )
         return
     history_list = result.get("history", [])
     if not history_list:
-        await update.message.reply_text("📭 История пуста")
+        await update.message.reply_text("📭 История пуста", reply_markup=get_main_keyboard())
         return
     lines = []
     for i, entry in enumerate(history_list[:10], 1):
         emoji = "✅" if entry["status"] == "да" else ("❌" if entry["status"] == "нет" else "⏳")
         lines.append(f"{i}. {entry['link']} {emoji} ({entry['timestamp'][:16]})")
-    await update.message.reply_text("📜 Последние 10 ссылок:\n" + "\n".join(lines))
+    await update.message.reply_text(
+        "📜 Последние 10 ссылок:\n" + "\n".join(lines),
+        reply_markup=get_main_keyboard()
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -481,12 +548,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     if is_admin(update.effective_user.id):
         text += "\n\n🔐 Админ-команды:\n/admin_help - список"
-    await update.message.reply_text(text)
+        await update.message.reply_text(text, reply_markup=get_admin_keyboard())
+    else:
+        await update.message.reply_text(text, reply_markup=get_main_keyboard())
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Полная информация о покупке ключей"""
-    await update.message.reply_text(
-        """📋 **NFAvpn — информация о покупке ключей**
+    text = """📋 **NFAvpn — информация о покупке ключей**
 
 ---
 
@@ -503,7 +571,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 **💰 Стоимость:**
 
-• 1 ключ на **5 использований** — **100 ₽**
+• 1 ключ на **5 использований** — *100 ₽**
 • По вопросам оптовых закупок — пишите @user123311a
 
 ---
@@ -540,17 +608,17 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ---
 
 🤝 **Благодарим за использование NFAvpn!**"""
-    )
+    
+    if is_admin(update.effective_user.id):
+        await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
     
     # Отправляем скриншоты, если они есть
     screenshots = load_screenshots()
-    print(f"🔍 Найдено скриншотов: {len(screenshots)}")
-    
     if screenshots:
         for screenshot in screenshots:
             try:
-                print(f"📤 Отправка скриншота: {screenshot['name']}, file_id: {screenshot['file_id']}")
-                # ИСПРАВЛЕНО: используем context.bot вместо update.message.bot
                 await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     photo=screenshot['file_id'],
@@ -558,36 +626,32 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as e:
                 print(f"❌ Ошибка отправки скриншота: {e}")
-    else:
-        await update.message.reply_text(
-            "ℹ️ Скриншоты ещё не загружены.\n"
-            "Свяжитесь с администратором для получения визуальной инструкции."
-        )
+
 # ========== АДМИН-КОМАНДЫ ==========
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
     text = (
-    "🔐 Админ-команды:\n\n"
-    "/admin_stats - общая статистика\n"
-    "/admin_links - количество ссылок в пуле\n"
-    "/admin_users - список пользователей\n"
-    "/admin_create <тип> <кол-во> <дни> <лимит> - создать ключи\n"
-    "/admin_deactivate <ключ> - деактивировать ключ\n"
-    "/admin_activate <ключ> - активировать ключ\n"
-    "/admin_refill <ключ> <количество> - пополнить остаток\n"
-    "/admin_deletekey <ключ> - удалить ключ\n"
-    "/admin_deleteuser <user_id> - удалить пользователя\n"
-    "/admin_addlinks - добавить ссылки (файл или текст)\n"
-    "/admin_linkstats - топ пользователей\n"
-    "/admin_get <количество> - получить N ссылок без ключа\n"
-    "/admin_add_screenshot - добавить скриншот для /info\n"
-    "/admin_list_screenshots - список всех скриншотов\n"
-    "/admin_del_screenshot <ID> - удалить скриншот по ID\n"
-    "/admin_help - это сообщение"
-)
-    await update.message.reply_text(text)
+        "🔐 Админ-команды:\n\n"
+        "/admin_stats - общая статистика\n"
+        "/admin_links - количество ссылок в пуле\n"
+        "/admin_users - список пользователей\n"
+        "/admin_create <тип> <кол-во> <дни> <лимит> - создать ключи\n"
+        "/admin_deactivate <ключ> - деактивировать ключ\n"
+        "/admin_activate <ключ> - активировать ключ\n"
+        "/admin_refill <ключ> <количество> - пополнить остаток\n"
+        "/admin_deletekey <ключ> - удалить ключ\n"
+        "/admin_deleteuser <user_id> - удалить пользователя\n"
+        "/admin_addlinks - добавить ссылки (файл или текст)\n"
+        "/admin_linkstats - топ пользователей\n"
+        "/admin_get <количество> - получить N ссылок без ключа\n"
+        "/admin_add_screenshot - добавить скриншот для /info\n"
+        "/admin_list_screenshots - список всех скриншотов\n"
+        "/admin_del_screenshot <ID> - удалить скриншот по ID\n"
+        "/admin_help - это сообщение"
+    )
+    await update.message.reply_text(text, reply_markup=get_admin_keyboard())
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -607,16 +671,16 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Ссылок в пуле: {total_links}\n"
             f"Выдано ссылок: {total_issued}"
         )
-        await update.message.reply_text(text)
+        await update.message.reply_text(text, reply_markup=get_admin_keyboard())
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
 async def admin_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
     links = load_links()
-    await update.message.reply_text(f"🔗 Всего ссылок: {len(links)}")
+    await update.message.reply_text(f"🔗 Всего ссылок: {len(links)}", reply_markup=get_admin_keyboard())
 
 async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -629,12 +693,12 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if uid:
             users_dict[uid] = users_dict.get(uid, 0) + 1
     if not users_dict:
-        await update.message.reply_text("Нет пользователей")
+        await update.message.reply_text("Нет пользователей", reply_markup=get_admin_keyboard())
         return
     text = "👥 Пользователи:\n"
     for uid, count in users_dict.items():
         text += f"{uid} – {count} ключей\n"
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, reply_markup=get_admin_keyboard())
 
 async def admin_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -642,21 +706,24 @@ async def admin_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if len(args) < 4:
-        await update.message.reply_text("Использование: /admin_create <тип> <кол-во> <дни> <лимит>")
+        await update.message.reply_text(
+            "Использование: /admin_create <тип> <кол-во> <дни> <лимит>",
+            reply_markup=get_admin_keyboard()
+        )
         return
     try:
         key_type = args[0].strip().lower()
         if key_type not in ('trial', 'premium'):
-            await update.message.reply_text("Тип: trial или premium")
+            await update.message.reply_text("Тип: trial или premium", reply_markup=get_admin_keyboard())
             return
         count = int(args[1])
         days = int(args[2])
         max_links = int(args[3])
         created = admin_generate_multiple(count, key_type, days, max_links)
         text = f"✅ Создано {len(created)} ключей:\n" + "\n".join(created) if created else "❌ Ошибка"
-        await update.message.reply_text(text)
+        await update.message.reply_text(text, reply_markup=get_admin_keyboard())
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
 async def admin_deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -664,14 +731,14 @@ async def admin_deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Укажите ключ")
+        await update.message.reply_text("Укажите ключ", reply_markup=get_admin_keyboard())
         return
     key = args[0].strip()
     try:
         supabase.table('keys').update({'active': False}).eq('key_text', key).execute()
-        await update.message.reply_text(f"✅ Ключ {key} деактивирован")
+        await update.message.reply_text(f"✅ Ключ {key} деактивирован", reply_markup=get_admin_keyboard())
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
 async def admin_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -679,14 +746,14 @@ async def admin_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Укажите ключ")
+        await update.message.reply_text("Укажите ключ", reply_markup=get_admin_keyboard())
         return
     key = args[0].strip()
     try:
         supabase.table('keys').update({'active': True}).eq('key_text', key).execute()
-        await update.message.reply_text(f"✅ Ключ {key} активирован")
+        await update.message.reply_text(f"✅ Ключ {key} активирован", reply_markup=get_admin_keyboard())
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
 async def admin_refill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -694,7 +761,10 @@ async def admin_refill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if len(args) < 2:
-        await update.message.reply_text("Использование: /admin_refill <ключ> <количество>")
+        await update.message.reply_text(
+            "Использование: /admin_refill <ключ> <количество>",
+            reply_markup=get_admin_keyboard()
+        )
         return
     key = args[0].strip()
     try:
@@ -704,11 +774,11 @@ async def admin_refill(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for row in result.data:
                 new_remaining = row['remaining_links'] + amount
                 update_user_key_remaining(key, row['owner_id'], new_remaining)
-            await update.message.reply_text(f"✅ Добавлено {amount} ссылок к ключу {key}")
+            await update.message.reply_text(f"✅ Добавлено {amount} ссылок к ключу {key}", reply_markup=get_admin_keyboard())
         else:
-            await update.message.reply_text(f"❌ Ключ {key} не активирован")
+            await update.message.reply_text(f"❌ Ключ {key} не активирован", reply_markup=get_admin_keyboard())
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
 async def admin_deletekey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -716,10 +786,13 @@ async def admin_deletekey(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Укажите ключ")
+        await update.message.reply_text("Укажите ключ", reply_markup=get_admin_keyboard())
         return
     key = args[0].strip()
-    await update.message.reply_text(f"⚠️ Подтвердите удаление: /admin_confirm_delete {key}")
+    await update.message.reply_text(
+        f"⚠️ Подтвердите удаление: /admin_confirm_delete {key}",
+        reply_markup=get_admin_keyboard()
+    )
 
 async def admin_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -727,14 +800,14 @@ async def admin_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Укажите ключ")
+        await update.message.reply_text("Укажите ключ", reply_markup=get_admin_keyboard())
         return
     key = args[0].strip()
     try:
         supabase.table('keys').delete().eq('key_text', key).execute()
-        await update.message.reply_text(f"✅ Ключ {key} удалён")
+        await update.message.reply_text(f"✅ Ключ {key} удалён", reply_markup=get_admin_keyboard())
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
 async def admin_deleteuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -742,7 +815,10 @@ async def admin_deleteuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Укажите ID пользователя: /admin_deleteuser <user_id>")
+        await update.message.reply_text(
+            "Укажите ID пользователя: /admin_deleteuser <user_id>",
+            reply_markup=get_admin_keyboard()
+        )
         return
     try:
         user_id = int(args[0])
@@ -750,30 +826,36 @@ async def admin_deleteuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [
                 InlineKeyboardButton("✅ Да", callback_data=f"confirm_deluser_{user_id}"),
                 InlineKeyboardButton("❌ Нет", callback_data="cancel_deluser")
+            ],
+            [
+                InlineKeyboardButton("🏠 Главное меню", callback_data="start")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(f"⚠️ Удалить пользователя {user_id}?", reply_markup=reply_markup)
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
 async def deleteuser_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     if data == "cancel_deluser":
-        await query.edit_message_text("❌ Отменено")
+        await query.edit_message_text("❌ Отменено", reply_markup=get_admin_keyboard())
         return
     if data.startswith("confirm_deluser_"):
         user_id = int(data.split("_")[2])
         deleted = admin_delete_user(user_id)
-        await query.edit_message_text(f"✅ Удалено {deleted} записей")
+        await query.edit_message_text(f"✅ Удалено {deleted} записей", reply_markup=get_admin_keyboard())
 
 async def admin_addlinks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
-    await update.message.reply_text("📤 Отправьте файл .txt со ссылками или текст")
+    await update.message.reply_text(
+        "📤 Отправьте файл .txt со ссылками или текст",
+        reply_markup=get_admin_keyboard()
+    )
     context.user_data['waiting_links'] = True
 
 async def handle_links_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -792,13 +874,13 @@ async def handle_links_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif update.message.text:
         links = [line.strip() for line in update.message.text.splitlines() if line.strip()]
     else:
-        await update.message.reply_text("Неверный формат")
+        await update.message.reply_text("Неверный формат", reply_markup=get_admin_keyboard())
         return
     if not links:
-        await update.message.reply_text("Ссылок не найдено")
+        await update.message.reply_text("Ссылок не найдено", reply_markup=get_admin_keyboard())
         return
     added = add_links_to_db(links)
-    await update.message.reply_text(f"✅ Добавлено {added} ссылок")
+    await update.message.reply_text(f"✅ Добавлено {added} ссылок", reply_markup=get_admin_keyboard())
     context.user_data['waiting_links'] = False
 
 async def admin_linkstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -814,17 +896,16 @@ async def admin_linkstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 stats[uid] = stats.get(uid, 0) + len(row.get('used_links', []))
         sorted_users = sorted(stats.items(), key=lambda x: x[1], reverse=True)
         if not sorted_users:
-            await update.message.reply_text("Нет данных")
+            await update.message.reply_text("Нет данных", reply_markup=get_admin_keyboard())
             return
         text = "🏆 Топ пользователей:\n"
         for idx, (uid, count) in enumerate(sorted_users[:5], 1):
             text += f"{idx}. {uid} – {count} ссылок\n"
-        await update.message.reply_text(text)
+        await update.message.reply_text(text, reply_markup=get_admin_keyboard())
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
 async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Админская команда: получить N ссылок без ключа"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
@@ -834,31 +915,32 @@ async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ Укажите количество ссылок:\n"
             "/admin_get <количество>\n\n"
-            "Пример: /admin_get 5"
+            "Пример: /admin_get 5",
+            reply_markup=get_admin_keyboard()
         )
         return
     
     try:
         count = int(args[0])
         if count <= 0:
-            await update.message.reply_text("❌ Количество должно быть больше 0")
+            await update.message.reply_text("❌ Количество должно быть больше 0", reply_markup=get_admin_keyboard())
             return
         if count > 50:
-            await update.message.reply_text("❌ Максимум 50 ссылок за раз")
+            await update.message.reply_text("❌ Максимум 50 ссылок за раз", reply_markup=get_admin_keyboard())
             return
     except ValueError:
-        await update.message.reply_text("❌ Введите число, например: /admin_get 5")
+        await update.message.reply_text("❌ Введите число, например: /admin_get 5", reply_markup=get_admin_keyboard())
         return
     
     try:
         all_links = load_links()
         if not all_links:
-            await update.message.reply_text("❌ Нет доступных ссылок в пуле")
+            await update.message.reply_text("❌ Нет доступных ссылок в пуле", reply_markup=get_admin_keyboard())
             return
         
         if count > len(all_links):
             count = len(all_links)
-            await update.message.reply_text(f"⚠️ В пуле только {count} ссылок, выдаю все")
+            await update.message.reply_text(f"⚠️ В пуле только {count} ссылок, выдаю все", reply_markup=get_admin_keyboard())
         
         chosen_links = random.sample(all_links, count)
         
@@ -876,17 +958,18 @@ async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"📎 Получено {deleted_count} ссылок:\n\n"
             f"{links_text}\n\n"
-            f"📊 Осталось ссылок в пуле: {remaining}"
+            f"📊 Осталось ссылок в пуле: {remaining}",
+            reply_markup=get_admin_keyboard()
         )
         
         print(f"✅ Админ выдал {deleted_count} ссылок")
         
     except Exception as e:
         print(f"❌ admin_get: {e}")
-        await update.message.reply_text("❌ Произошла ошибка")
+        await update.message.reply_text("❌ Произошла ошибка", reply_markup=get_admin_keyboard())
+
 # ========== РАБОТА СО СКРИНШОТАМИ ==========
 def save_screenshot(name, file_id):
-    """Сохраняет скриншот в базу данных"""
     try:
         supabase.table('screenshots').insert({
             'name': name,
@@ -898,7 +981,6 @@ def save_screenshot(name, file_id):
         return False
 
 def load_screenshots():
-    """Загружает все скриншоты из базы"""
     try:
         response = supabase.table('screenshots').select('*').execute()
         return response.data
@@ -907,7 +989,6 @@ def load_screenshots():
         return []
 
 def delete_screenshot(screenshot_id):
-    """Удаляет скриншот по ID"""
     try:
         supabase.table('screenshots').delete().eq('id', screenshot_id).execute()
         return True
@@ -916,70 +997,67 @@ def delete_screenshot(screenshot_id):
         return False
 
 async def admin_add_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Админская команда: добавить скриншот"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
     
     await update.message.reply_text(
         "📤 Отправьте мне изображение (скриншот), которое хотите добавить.\n"
-        "После отправки укажите название (например: 'Активация ключа' или 'Получение ссылки')"
+        "После отправки укажите название (например: 'Активация ключа' или 'Получение ссылки')",
+        reply_markup=get_admin_keyboard()
     )
     context.user_data['waiting_screenshot'] = True
 
-async def handle_screenshot_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает загрузку скриншотов"""
-    if not is_admin(update.effective_user.id):
-        return
-    
-    if not context.user_data.get('waiting_screenshot'):
-        return
-    
-    # Если это фото
-    if update.message.photo:
-        # Берем самое большое качество
-        photo = update.message.photo[-1]
-        file_id = photo.file_id
-        
-        # Сохраняем в базу
-        name = context.user_data.get('screenshot_name', 'Скриншот')
-        save_screenshot(name, file_id)
-        
-        await update.message.reply_text(f"✅ Скриншот '{name}' сохранён!")
-        context.user_data['waiting_screenshot'] = False
-        context.user_data['screenshot_name'] = None
-    else:
-        await update.message.reply_text("❌ Отправьте изображение (фото)")
-
 async def admin_set_screenshot_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Устанавливает название для скриншота перед загрузкой"""
     if not is_admin(update.effective_user.id):
         return
     
     if context.user_data.get('waiting_screenshot'):
         context.user_data['screenshot_name'] = update.message.text
-        await update.message.reply_text(f"✅ Название сохранено: '{update.message.text}'\nТеперь отправьте изображение.")
+        await update.message.reply_text(
+            f"✅ Название сохранено: '{update.message.text}'\nТеперь отправьте изображение.",
+            reply_markup=get_admin_keyboard()
+        )
+
+async def handle_screenshot_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    
+    if not context.user_data.get('waiting_screenshot'):
+        await update.message.reply_text("❌ Сначала отправьте /admin_add_screenshot", reply_markup=get_admin_keyboard())
+        return
+    
+    if update.message.photo:
+        photo = update.message.photo[-1]
+        file_id = photo.file_id
         
+        name = context.user_data.get('screenshot_name', 'Скриншот')
+        save_screenshot(name, file_id)
+        
+        await update.message.reply_text(f"✅ Скриншот '{name}' сохранён!", reply_markup=get_admin_keyboard())
+        context.user_data['waiting_screenshot'] = False
+        context.user_data['screenshot_name'] = None
+    else:
+        await update.message.reply_text("❌ Отправьте изображение (фото)", reply_markup=get_admin_keyboard())
+
 async def admin_list_screenshots(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать список всех скриншотов"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
     
     screenshots = load_screenshots()
     if not screenshots:
-        await update.message.reply_text("📭 Нет сохранённых скриншотов")
+        await update.message.reply_text("📭 Нет сохранённых скриншотов", reply_markup=get_admin_keyboard())
         return
     
     text = "📸 **Список скриншотов:**\n\n"
     for s in screenshots:
         text += f"🆔 ID: `{s['id']}` — {s['name']}\n"
-    text += "\n🗑️ Чтобы удалить, отправьте:\n`/admin_del_screenshot <ID>`"
     
-    await update.message.reply_text(text, parse_mode="Markdown")
+    text += "\n🗑️ Чтобы удалить, отправьте:\n`/admin_del_screenshot <ID>`"
+    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
 
 async def admin_del_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удалить скриншот по ID"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
@@ -989,19 +1067,20 @@ async def admin_del_screenshot(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             "❌ Укажите ID скриншота для удаления:\n"
             "/admin_del_screenshot <ID>\n\n"
-            "Сначала посмотрите список: /admin_list_screenshots"
+            "Сначала посмотрите список: /admin_list_screenshots",
+            reply_markup=get_admin_keyboard()
         )
         return
     
     try:
         screenshot_id = int(args[0])
     except ValueError:
-        await update.message.reply_text("❌ ID должен быть числом")
+        await update.message.reply_text("❌ ID должен быть числом", reply_markup=get_admin_keyboard())
         return
     
-    # Проверяем, существует ли скриншот
     screenshots = load_screenshots()
     exists = False
+    name = None
     for s in screenshots:
         if s['id'] == screenshot_id:
             exists = True
@@ -1009,15 +1088,131 @@ async def admin_del_screenshot(update: Update, context: ContextTypes.DEFAULT_TYP
             break
     
     if not exists:
-        await update.message.reply_text(f"❌ Скриншот с ID {screenshot_id} не найден")
+        await update.message.reply_text(f"❌ Скриншот с ID {screenshot_id} не найден", reply_markup=get_admin_keyboard())
         return
     
-    # Удаляем
     success = delete_screenshot(screenshot_id)
     if success:
-        await update.message.reply_text(f"✅ Скриншот '{name}' (ID: {screenshot_id}) удалён!")
+        await update.message.reply_text(f"✅ Скриншот '{name}' (ID: {screenshot_id}) удалён!", reply_markup=get_admin_keyboard())
     else:
-        await update.message.reply_text(f"❌ Ошибка при удалении скриншота")
+        await update.message.reply_text(f"❌ Ошибка при удалении скриншота", reply_markup=get_admin_keyboard())
+
+# ========== ОБРАБОТЧИК КНОПОК ==========
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатие на инлайн-кнопки"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    user_id = update.effective_user.id
+    
+    # Обработка статуса ссылки (да/нет)
+    if data.startswith("status_"):
+        status = data.split("_")[1]
+        key = context.user_data.get("last_key")
+        if not key:
+            await query.edit_message_text("❌ Не найден ключ для обновления статуса.", reply_markup=get_main_keyboard())
+            return
+        result = set_status_logic(key, user_id, status)
+        if result.get("success"):
+            await query.edit_message_text(
+                f"✅ Статус сохранён: {'работает' if status == 'да' else 'не работает'}",
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            await query.edit_message_text(
+                f"❌ Ошибка: {result.get('message', '')}",
+                reply_markup=get_main_keyboard()
+            )
+        return
+    
+    # Обработка остальных кнопок
+    if data == "start":
+        if is_admin(user_id):
+            await query.edit_message_text(
+                "👋 Главное меню NFAvpn!",
+                reply_markup=get_admin_keyboard()
+            )
+        else:
+            await query.edit_message_text(
+                "👋 Главное меню NFAvpn!",
+                reply_markup=get_main_keyboard()
+            )
+    
+    elif data == "info":
+        text = """📋 **Информация о NFAvpn**
+
+💰 **Цена:** 50 ₽ за 1 ключ (5 использований)
+🔄 **Гарантия:** Если ни одна ссылка не работает — выдаём новый ключ бесплатно!
+👤 **Админ:** @user123311a"""
+        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    
+    elif data == "stats":
+        result = stats_logic(user_id)
+        if result.get("success"):
+            text = f"📊 **Ваша статистика:**\n\n"
+            text += f"Всего активных ключей: {result['active_keys_count']}\n"
+            text += f"Осталось ссылок: {result['total_remaining']}\n"
+            text += f"Всего доступно ссылок на сервере: {result['total_links_available']}\n"
+            await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+        else:
+            await query.edit_message_text("❌ Не удалось получить статистику", reply_markup=get_main_keyboard())
+    
+    elif data == "history":
+        result = history_logic(user_id)
+        if result.get("success"):
+            history_list = result.get("history", [])
+            if not history_list:
+                await query.edit_message_text("📭 История пуста", reply_markup=get_main_keyboard())
+                return
+            lines = []
+            for i, entry in enumerate(history_list[:10], 1):
+                emoji = "✅" if entry["status"] == "да" else ("❌" if entry["status"] == "нет" else "⏳")
+                lines.append(f"{i}. {entry['link']} {emoji} ({entry['timestamp'][:16]})")
+            await query.edit_message_text(
+                "📜 **Последние 10 ссылок:**\n" + "\n".join(lines),
+                reply_markup=get_main_keyboard(),
+                parse_mode="Markdown"
+            )
+        else:
+            await query.edit_message_text(f"❌ {result.get('message', 'ошибка')}", reply_markup=get_main_keyboard())
+    
+    elif data == "help":
+        text = """❓ **Помощь**
+
+📖 Доступные команды:
+/key <ключ> - активировать ключ
+/get - получить ссылку
+/stat - статистика
+/history - история ссылок
+/info - информация о покупке
+
+👤 По всем вопросам: @user123311a"""
+        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    
+    # Админ-кнопки
+    elif data == "admin_stats":
+        await admin_stats(update, context)
+    elif data == "admin_users":
+        await admin_users(update, context)
+    elif data == "admin_create":
+        await update.message.reply_text(
+            "Использование: /admin_create <тип> <кол-во> <дни> <лимит>\n"
+            "Пример: /admin_create premium 5 365 100",
+            reply_markup=get_admin_keyboard()
+        )
+    elif data == "admin_addlinks":
+        await admin_addlinks(update, context)
+    elif data == "admin_screenshots":
+        await admin_list_screenshots(update, context)
+    elif data == "admin_get":
+        await update.message.reply_text(
+            "Укажите количество ссылок:\n"
+            "/admin_get <количество>\n\n"
+            "Пример: /admin_get 5",
+            reply_markup=get_admin_keyboard()
+        )
+
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
 bot_app = Application.builder().token(BOT_TOKEN).build()
 bot_app.add_handler(CommandHandler("start", start))
@@ -1041,13 +1236,14 @@ bot_app.add_handler(CommandHandler("admin_deleteuser", admin_deleteuser))
 bot_app.add_handler(CommandHandler("admin_addlinks", admin_addlinks))
 bot_app.add_handler(CommandHandler("admin_linkstats", admin_linkstats))
 bot_app.add_handler(CommandHandler("admin_get", admin_get))
+bot_app.add_handler(CommandHandler("admin_add_screenshot", admin_add_screenshot))
 bot_app.add_handler(CommandHandler("admin_list_screenshots", admin_list_screenshots))
 bot_app.add_handler(CommandHandler("admin_del_screenshot", admin_del_screenshot))
-bot_app.add_handler(CommandHandler("admin_add_screenshot", admin_add_screenshot))
+bot_app.add_handler(CallbackQueryHandler(deleteuser_callback, pattern="^(confirm_deluser_|cancel_deluser)"))
+bot_app.add_handler(CallbackQueryHandler(button_callback))
+bot_app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_links_input))
 bot_app.add_handler(MessageHandler(filters.PHOTO, handle_screenshot_input))
 bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_set_screenshot_name))
-bot_app.add_handler(CallbackQueryHandler(deleteuser_callback, pattern="^(confirm_deluser_|cancel_deluser)"))
-bot_app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_links_input))
 bot_app.add_handler(CallbackQueryHandler(status_callback, pattern="^status_"))
 
 # ========== ЗАПУСК ==========
