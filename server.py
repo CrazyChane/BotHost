@@ -956,7 +956,8 @@ async def admin_set_screenshot_name(update: Update, context: ContextTypes.DEFAUL
     if context.user_data.get('waiting_screenshot'):
         context.user_data['screenshot_name'] = update.message.text
         await update.message.reply_text(f"✅ Название сохранено: '{update.message.text}'\nТеперь отправьте изображение.")
-        async def admin_list_screenshots(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        
+async def admin_list_screenshots(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать список всех скриншотов"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
