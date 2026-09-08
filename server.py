@@ -503,7 +503,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 **💰 Стоимость:**
 
-• 1 ключ на **5 использований** — **50 ₽**
+• 1 ключ на **5 использований** — **100 ₽**
 • По вопросам оптовых закупок — пишите @user123311a
 
 ---
@@ -528,7 +528,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 1. **Скопируйте ключ**, который получили от администратора
 2. **Вставьте ключ** в бота после команды /key
 
-
 3. **Нажмите Enter** — ключ активирован!
 
 ---
@@ -545,10 +544,14 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Отправляем скриншоты, если они есть
     screenshots = load_screenshots()
+    print(f"🔍 Найдено скриншотов: {len(screenshots)}")
+    
     if screenshots:
         for screenshot in screenshots:
             try:
-                await update.message.bot.send_photo(
+                print(f"📤 Отправка скриншота: {screenshot['name']}, file_id: {screenshot['file_id']}")
+                # ИСПРАВЛЕНО: используем context.bot вместо update.message.bot
+                await context.bot.send_photo(
                     chat_id=update.effective_chat.id,
                     photo=screenshot['file_id'],
                     caption=f"🖼️ {screenshot['name']}"
