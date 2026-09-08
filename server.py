@@ -389,16 +389,15 @@ def get_admin_keyboard():
         ],
         [
             InlineKeyboardButton("🔑 Все ключи", callback_data="admin_all_keys"),
-            InlineKeyboardButton("👤 Удалить пользователя", callback_data="admin_deleteuser")
+            InlineKeyboardButton("🗑️ Удалить неиспользуемые", callback_data="admin_delete_unused")
         ],
         [
-            InlineKeyboardButton("📋 Помощь", callback_data="admin_help"),
+            InlineKeyboardButton("👤 Удалить пользователя", callback_data="admin_deleteuser"),
+            InlineKeyboardButton("📋 Помощь", callback_data="admin_help")
+        ],
+        [
             InlineKeyboardButton("🏠 Главное меню", callback_data="start")
         ]
-        [
-    InlineKeyboardButton("🗑️ Удалить неиспользуемые", callback_data="admin_delete_unused"),
-    InlineKeyboardButton("👤 Удалить пользователя", callback_data="admin_deleteuser")
-]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -1596,7 +1595,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         elif data == "admin_all_keys":
-            # Показываем меню фильтрации ключей
             keyboard = [
                 [
                     InlineKeyboardButton("🟢 Активные", callback_data="admin_keys_active"),
@@ -1616,7 +1614,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         elif data.startswith("admin_keys_"):
-            # Фильтрация ключей
             filter_type = data.replace("admin_keys_", "")
             keys = load_keys()
             
@@ -1666,7 +1663,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         elif data.startswith("confirm_delkey_"):
-            # Подтверждение удаления ключа
             key = data.replace("confirm_delkey_", "")
             try:
                 supabase.table('keys').delete().eq('key_text', key).execute()
@@ -1676,51 +1672,56 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data == "cancel_delkey":
             await query.edit_message_text("❌ Удаление ключа отменено", reply_markup=get_admin_keyboard())
+        
+        # ========== НОВАЯ КНОПКА ДЛЯ УДАЛЕНИЯ НЕИСПОЛЬЗУЕМЫХ КЛЮЧЕЙ ==========
+        elif data == "admin_delete_unused":
+            keys = load_keys()
+            unused_keys = []
+            for key_text, info in keys.items():
+                if info.get('owner_id') is None:
+                    unused_keys.append(key_text)
+            
+            if not unused_keys:
+                await query.edit_message_text("📭 Нет неиспользуемых ключей для удаления", reply_markup=get_admin_keyboard())
+                return
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ Да, удалить все", callback_data="confirm_delete_unused"),
+                    InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_unused")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                f"⚠️ Найдено **{len(unused_keys)}** неиспользуемых ключей.\n\n"
+                "Они будут удалены безвозвратно.\n"
+                "Вы уверены?",
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        
+        elif data == "confirm_delete_unused":
+            keys = load_keys()
+            deleted_count = 0
+            for key_text, info in keys.items():
+                if info.get('owner_id') is None:
+                    try:
+                        supabase.table('keys').delete().eq('key_text', key_text).execute()
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"❌ Ошибка удаления {key_text}: {e}")
+            await query.edit_message_text(
+                f"✅ Удалено **{deleted_count}** неиспользуемых ключей!",
+                reply_markup=get_admin_keyboard(),
+                parse_mode="Markdown"
+            )
+        
+        elif data == "cancel_delete_unused":
+            await query.edit_message_text("❌ Удаление отменено", reply_markup=get_admin_keyboard())
     
     else:
         # Если пользователь не админ и нажал на админ-кнопку
         await query.edit_message_text("⛔ Доступ запрещён", reply_markup=get_main_keyboard())
-        elif data == "admin_delete_unused":
-    # Показываем подтверждение удаления неиспользуемых ключей
-    keys = load_keys()
-    unused_keys = []
-    for key_text, info in keys.items():
-        if info.get('owner_id') is None:
-            unused_keys.append(key_text)
-    
-    if not unused_keys:
-        await query.edit_message_text("📭 Нет неиспользуемых ключей для удаления", reply_markup=get_admin_keyboard())
-        return
-    
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Да, удалить все", callback_data="confirm_delete_unused"),
-            InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_unused")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        f"⚠️ Найдено **{len(unused_keys)}** неиспользуемых ключей.\n\n"
-        "Они будут удалены безвозвратно.\n"
-        "Вы уверены?",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
-
-elif data == "confirm_delete_unused":
-    keys = load_keys()
-    deleted_count = 0
-    for key_text, info in keys.items():
-        if info.get('owner_id') is None:
-            try:
-                supabase.table('keys').delete().eq('key_text', key_text).execute()
-                deleted_count += 1
-            except Exception as e:
-                print(f"❌ Ошибка удаления {key_text}: {e}")
-    await query.edit_message_text(f"✅ Удалено **{deleted_count}** неиспользуемых ключей!", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
-
-elif data == "cancel_delete_unused":
-    await query.edit_message_text("❌ Удаление отменено", reply_markup=get_admin_keyboard())
 
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
 bot_app = Application.builder().token(BOT_TOKEN).build()
