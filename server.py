@@ -208,7 +208,6 @@ def get_link_logic(owner_id):
         user_keys = load_user_keys(owner_id)
         active = []
         for uk in user_keys:
-            # Проверяем только остаток ссылок (без проверки времени)
             if uk['remaining_links'] > 0:
                 active.append(uk)
         if not active:
@@ -282,7 +281,6 @@ def stats_logic(owner_id):
     total_remaining = 0
     active_keys = []
     for uk in user_keys:
-        # Считаем все ключи, у которых есть остаток ссылок
         if uk['remaining_links'] > 0:
             active_keys.append(uk)
             total_remaining += uk['remaining_links']
@@ -304,7 +302,6 @@ def generate_key_string(key_type, max_links):
     year = datetime.datetime.now().year
     random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
     key = f"{prefix}-{year}-{random_part}"
-    # Дата окончания через 100 лет (бессрочно)
     expiry_date = (datetime.datetime.now() + datetime.timedelta(days=365*100)).strftime("%Y-%m-%d")
     return key, expiry_date
 
@@ -343,7 +340,6 @@ def admin_delete_user(user_id):
 
 # ========== КНОПКИ ==========
 def get_main_keyboard():
-    """Главное меню для пользователей"""
     keyboard = [
         [
             InlineKeyboardButton("🛒 Купить ключ", url="https://t.me/user123311a"),
@@ -361,7 +357,6 @@ def get_main_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 def get_admin_keyboard():
-    """Главное меню для администратора (все команды)"""
     keyboard = [
         [
             InlineKeyboardButton("📊 Общая статистика", callback_data="admin_stats"),
@@ -629,7 +624,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
     
-    # Отправляем скриншоты, если они есть
     screenshots = load_screenshots()
     if screenshots:
         for screenshot in screenshots:
@@ -652,6 +646,7 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/admin_stats - общая статистика\n"
         "/admin_links - количество ссылок в пуле\n"
         "/admin_users - список пользователей\n"
+        "/admin_userinfo <user_id> - профиль пользователя\n"
         "/admin_create <тип> <кол-во> <лимит> - создать бессрочные ключи\n"
         "   пример: /admin_create premium 5 100\n"
         "/admin_deactivate <ключ> - деактивировать ключ\n"
@@ -726,9 +721,78 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"**🆔 {uid}** — {len(keys)} ключей\n"
         for key in keys:
             text += f"  🔑 `{key}`\n"
+        text += f"  👤 `/admin_userinfo {uid}`\n"
         text += "\n"
     
+    text += "\n💡 Нажмите на команду выше, чтобы открыть профиль пользователя"
     await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+
+async def admin_userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать полную информацию о пользователе по ID"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Доступ запрещён")
+        return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "❌ Укажите ID пользователя:\n"
+            "/admin_userinfo <user_id>\n\n"
+            "Пример: /admin_userinfo 741695652",
+            reply_markup=get_admin_keyboard()
+        )
+        return
+    
+    try:
+        user_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ ID должен быть числом", reply_markup=get_admin_keyboard())
+        return
+    
+    user_keys = load_user_keys(user_id)
+    
+    if not user_keys:
+        await update.message.reply_text(
+            f"👤 Пользователь с ID `{user_id}` не найден или у него нет ключей",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="Markdown"
+        )
+        return
+    
+    text = f"👤 **Профиль пользователя:**\n"
+    text += f"🆔 **ID:** `{user_id}`\n"
+    text += f"🔑 **Всего ключей:** {len(user_keys)}\n\n"
+    
+    total_links = 0
+    text += "📋 **Ключи пользователя:**\n"
+    
+    for uk in user_keys:
+        key_text = uk['key_text']
+        remaining = uk['remaining_links']
+        total_links += remaining
+        text += f"  🔑 `{key_text}` — осталось {remaining} ссылок\n"
+        
+        user_data = load_data(user_id)
+        if key_text in user_data and user_data[key_text]['links_history']:
+            history = user_data[key_text]['links_history']
+            last_link = history[-1] if history else None
+            if last_link:
+                text += f"     📎 Последняя ссылка: {last_link['link']}\n"
+                text += f"     📊 Статус: {last_link['status']}\n"
+                text += f"     🕐 Дата: {last_link['timestamp'][:16]}\n"
+        text += "\n"
+    
+    text += f"📊 **Всего осталось ссылок:** {total_links}\n"
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("🗑️ Удалить пользователя", callback_data=f"admin_deleteuser_{user_id}"),
+            InlineKeyboardButton("🏠 Назад", callback_data="start")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def admin_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -918,7 +982,6 @@ async def handle_links_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['waiting_links'] = False
 
 async def admin_delete_unused_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удаляет все ключи, которые не активированы (owner_id = NULL)"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
@@ -953,7 +1016,6 @@ async def admin_delete_unused_keys(update: Update, context: ContextTypes.DEFAULT
     )
 
 async def admin_confirm_delete_unused_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback для подтверждения удаления неиспользуемых ключей"""
     query = update.callback_query
     await query.answer()
     
@@ -1065,9 +1127,8 @@ async def admin_get(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"❌ admin_get: {e}")
         await update.message.reply_text("❌ Произошла ошибка", reply_markup=get_admin_keyboard())
 
-# ========== НОВЫЕ АДМИН-КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ КЛЮЧАМИ ==========
+# ========== НОВЫЕ АДМИН-КОМАНДЫ ==========
 async def admin_all_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать все ключи в системе с фильтрацией"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
@@ -1092,7 +1153,6 @@ async def admin_all_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def admin_keys_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает фильтрацию ключей"""
     query = update.callback_query
     await query.answer()
     
@@ -1147,7 +1207,6 @@ async def admin_keys_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def admin_confirm_delete_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтверждение удаления ключа (с проверкой на активацию)"""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
@@ -1198,7 +1257,6 @@ async def admin_confirm_delete_key(update: Update, context: ContextTypes.DEFAULT
             await update.message.reply_text(f"❌ Ошибка удаления: {e}", reply_markup=get_admin_keyboard())
 
 async def admin_confirm_delete_key_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback для подтверждения удаления ключа"""
     query = update.callback_query
     await query.answer()
     
@@ -1355,7 +1413,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = update.effective_user.id
     
-    # Обработка статуса ссылки (да/нет)
     if data.startswith("status_"):
         status = data.split("_")[1]
         key = context.user_data.get("last_key")
@@ -1375,7 +1432,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
     
-    # Обработка остальных кнопок
     if data == "start":
         if is_admin(user_id):
             await query.edit_message_text(
@@ -1439,7 +1495,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 👤 По всем вопросам: @user123311a"""
         await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
     
-    # ========== АДМИН-КНОПКИ (только для администратора) ==========
+    # ========== АДМИН-КНОПКИ ==========
     elif is_admin(user_id):
         if data == "admin_stats":
             try:
@@ -1481,9 +1537,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"**🆔 {uid}** — {len(keys)} ключей\n"
                 for key in keys:
                     text += f"  🔑 `{key}`\n"
+                text += f"  👤 `/admin_userinfo {uid}`\n"
                 text += "\n"
             
+            text += "\n💡 Нажмите на команду выше, чтобы открыть профиль пользователя"
             await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+        
+        elif data == "admin_userinfo":
+            # Это обрабатывается через команду, но на случай если кнопка
+            pass
         
         elif data == "admin_create":
             await query.edit_message_text(
@@ -1588,6 +1650,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "/admin_stats - общая статистика\n"
                 "/admin_links - количество ссылок в пуле\n"
                 "/admin_users - список пользователей\n"
+                "/admin_userinfo <user_id> - профиль пользователя\n"
                 "/admin_create <тип> <кол-во> <лимит> - создать бессрочные ключи\n"
                 "/admin_deactivate <ключ> - деактивировать ключ\n"
                 "/admin_activate <ключ> - активировать ключ\n"
@@ -1732,7 +1795,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Удаление отменено", reply_markup=get_admin_keyboard())
     
     else:
-        # Если пользователь не админ и нажал на админ-кнопку
         await query.edit_message_text("⛔ Доступ запрещён", reply_markup=get_main_keyboard())
 
 # ========== СОЗДАНИЕ ПРИЛОЖЕНИЯ БОТА ==========
@@ -1748,6 +1810,7 @@ bot_app.add_handler(CommandHandler("admin_help", admin_help))
 bot_app.add_handler(CommandHandler("admin_stats", admin_stats))
 bot_app.add_handler(CommandHandler("admin_links", admin_links))
 bot_app.add_handler(CommandHandler("admin_users", admin_users))
+bot_app.add_handler(CommandHandler("admin_userinfo", admin_userinfo))
 bot_app.add_handler(CommandHandler("admin_create", admin_create))
 bot_app.add_handler(CommandHandler("admin_deactivate", admin_deactivate))
 bot_app.add_handler(CommandHandler("admin_activate", admin_activate))
