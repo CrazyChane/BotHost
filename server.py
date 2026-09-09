@@ -564,11 +564,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Полная информация о покупке ключей"""
-    text = """📋 **NFAvpn — информация о покупке ключей**
+    text = """📋 <b>NFAvpn — информация о покупке ключей</b>
 
 ---
 
-**🔑 Как получить ключ:**
+<b>🔑 Как получить ключ:</b>
 
 1. Напишите администратору: @user123311a
 2. Оформите заказ:
@@ -579,17 +579,17 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ---
 
-**💰 Стоимость:**
+<b>💰 Стоимость:</b>
 
-• 1 ключ на **5 использований** — **100 ₽**
+• 1 ключ на <b>5 использований</b> — <b>100 ₽</b>
 • По вопросам оптовых закупок — пишите @user123311a
 
 ---
 
-**🔄 Гарантия возврата:**
+<b>🔄 Гарантия возврата:</b>
 
-Если **ни одна** из 5 ссылок по вашему ключу не работает:
-→ Мы выдаём **новый ключ** на 5 использований **бесплатно**!
+Если <b>ни одна</b> из 5 ссылок по вашему ключу не работает:
+→ Мы выдаём <b>новый ключ</b> на 5 использований <b>бесплатно</b>!
 
 Условия:
 • Проверьте все 5 ссылок
@@ -599,30 +599,30 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ---
 
-**📱 Как активировать ключ:**
+<b>📱 Как активировать ключ:</b>
 
 Следуйте инструкции:
 
-1. **Скопируйте ключ**, который получили от администратора
-2. **Вставьте ключ** в бота после команды /key
+1. <b>Скопируйте ключ</b>, который получили от администратора
+2. <b>Вставьте ключ</b> в бота после команды /key
 
-3. **Нажмите Enter** — ключ активирован!
+3. <b>Нажмите Enter</b> — ключ активирован!
 
 ---
 
-**📞 Контакты:**
+<b>📞 Контакты:</b>
 
 👤 Администратор: @user123311a
 📱 Бот: @NFAvpn_bot
 
 ---
 
-🤝 **Благодарим за использование NFAvpn!**"""
+🤝 <b>Благодарим за использование NFAvpn!</b>"""
     
     if is_admin(update.effective_user.id):
-        await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+        await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
     else:
-        await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+        await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
     
     screenshots = load_screenshots()
     if screenshots:
@@ -642,30 +642,30 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Доступ запрещён")
         return
     text = (
-        "🔐 Админ-команды:\n\n"
+        "🔐 <b>Админ-команды:</b>\n\n"
         "/admin_stats - общая статистика\n"
         "/admin_links - количество ссылок в пуле\n"
         "/admin_users - список пользователей\n"
-        "/admin_userinfo <user_id> - профиль пользователя\n"
-        "/admin_create <тип> <кол-во> <лимит> - создать бессрочные ключи\n"
+        "/admin_userinfo &lt;user_id&gt; - профиль пользователя\n"
+        "/admin_create &lt;тип&gt; &lt;кол-во&gt; &lt;лимит&gt; - создать бессрочные ключи\n"
         "   пример: /admin_create premium 5 100\n"
-        "/admin_deactivate <ключ> - деактивировать ключ\n"
-        "/admin_activate <ключ> - активировать ключ\n"
-        "/admin_refill <ключ> <количество> - пополнить остаток\n"
-        "/admin_deletekey <ключ> - удалить ключ\n"
-        "/admin_deleteuser <user_id> - удалить пользователя\n"
+        "/admin_deactivate &lt;ключ&gt; - деактивировать ключ\n"
+        "/admin_activate &lt;ключ&gt; - активировать ключ\n"
+        "/admin_refill &lt;ключ&gt; &lt;количество&gt; - пополнить остаток\n"
+        "/admin_deletekey &lt;ключ&gt; - удалить ключ\n"
+        "/admin_deleteuser &lt;user_id&gt; - удалить пользователя\n"
         "/admin_addlinks - добавить ссылки (файл или текст)\n"
         "/admin_linkstats - топ пользователей\n"
-        "/admin_get <количество> - получить N ссылок без ключа\n"
+        "/admin_get &lt;количество&gt; - получить N ссылок без ключа\n"
         "/admin_add_screenshot - добавить скриншот для /info\n"
         "/admin_list_screenshots - список всех скриншотов\n"
-        "/admin_del_screenshot <ID> - удалить скриншот по ID\n"
+        "/admin_del_screenshot &lt;ID&gt; - удалить скриншот по ID\n"
         "/admin_all_keys - показать все ключи\n"
         "/admin_delete_unused - удалить все неиспользуемые ключи\n"
-        "/admin_confirm_delete_key <ключ> - удалить ключ с подтверждением\n"
+        "/admin_confirm_delete_key &lt;ключ&gt; - удалить ключ с подтверждением\n"
         "/admin_help - это сообщение"
     )
-    await update.message.reply_text(text, reply_markup=get_admin_keyboard())
+    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -679,13 +679,13 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data_all = load_data()
         total_issued = sum(len(data.get('used_links', [])) for data in user_data_all.values())
         text = (
-            f"📊 Общая статистика:\n"
+            f"📊 <b>Общая статистика:</b>\n"
             f"Всего ключей: {len(keys_all)}\n"
             f"Пользователей: {len(users)}\n"
             f"Ссылок в пуле: {total_links}\n"
             f"Выдано ссылок: {total_issued}"
         )
-        await update.message.reply_text(text, reply_markup=get_admin_keyboard())
+        await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
@@ -1008,11 +1008,11 @@ async def admin_delete_unused_keys(update: Update, context: ContextTypes.DEFAULT
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        f"⚠️ Найдено **{len(unused_keys)}** неиспользуемых ключей (не активированы).\n\n"
+        f"⚠️ Найдено <b>{len(unused_keys)}</b> неиспользуемых ключей (не активированы).\n\n"
         "Они будут удалены безвозвратно.\n"
         "Вы уверены?",
         reply_markup=reply_markup,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 async def admin_confirm_delete_unused_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1037,9 +1037,9 @@ async def admin_confirm_delete_unused_callback(update: Update, context: ContextT
                     print(f"❌ Ошибка удаления {key_text}: {e}")
         
         await query.edit_message_text(
-            f"✅ Удалено **{deleted_count}** неиспользуемых ключей!",
+            f"✅ Удалено <b>{deleted_count}</b> неиспользуемых ключей!",
             reply_markup=get_admin_keyboard(),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 async def admin_linkstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1057,10 +1057,10 @@ async def admin_linkstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not sorted_users:
             await update.message.reply_text("Нет данных", reply_markup=get_admin_keyboard())
             return
-        text = "🏆 Топ пользователей:\n"
+        text = "🏆 <b>Топ пользователей:</b>\n"
         for idx, (uid, count) in enumerate(sorted_users[:5], 1):
             text += f"{idx}. {uid} – {count} ссылок\n"
-        await update.message.reply_text(text, reply_markup=get_admin_keyboard())
+        await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
 
@@ -1146,10 +1146,10 @@ async def admin_all_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "🔑 **Управление ключами**\n\n"
+        "🔑 <b>Управление ключами</b>\n\n"
         "Выберите фильтр для отображения ключей:",
         reply_markup=reply_markup,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 async def admin_keys_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1178,13 +1178,13 @@ async def admin_keys_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    text = f"🔑 **Всего ключей: {len(filtered_keys)}**\n\n"
-    text += "📋 **Список ключей:**\n"
+    text = f"🔑 <b>Всего ключей: {len(filtered_keys)}</b>\n\n"
+    text += "📋 <b>Список ключей:</b>\n"
     
     for key_text, info in filtered_keys[:50]:
         status = "🟢 Активен" if info.get('active', True) else "🔴 Деактивирован"
         owner = info.get('owner_id', 'Не привязан')
-        text += f"`{key_text}` — {status} | Владелец: {owner}\n"
+        text += f"<code>{key_text}</code> — {status} | Владелец: {owner}\n"
     
     if len(filtered_keys) > 50:
         text += f"\n... и ещё {len(filtered_keys) - 50} ключей"
@@ -1203,7 +1203,7 @@ async def admin_keys_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         text,
         reply_markup=reply_markup,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 async def admin_confirm_delete_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1225,7 +1225,7 @@ async def admin_confirm_delete_key(update: Update, context: ContextTypes.DEFAULT
     
     keys = load_keys()
     if key not in keys:
-        await update.message.reply_text(f"❌ Ключ `{key}` не найден", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+        await update.message.reply_text(f"❌ Ключ <code>{key}</code> не найден", reply_markup=get_admin_keyboard(), parse_mode="HTML")
         return
     
     info = keys[key]
@@ -1240,19 +1240,19 @@ async def admin_confirm_delete_key(update: Update, context: ContextTypes.DEFAULT
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            f"⚠️ **Ключ `{key}` активирован у пользователя {owner_id}!**\n\n"
-            f"Если вы удалите этот ключ, пользователь **потеряет доступ** к оставшимся ссылкам.\n\n"
+            f"⚠️ <b>Ключ <code>{key}</code> активирован у пользователя {owner_id}!</b>\n\n"
+            f"Если вы удалите этот ключ, пользователь <b>потеряет доступ</b> к оставшимся ссылкам.\n\n"
             f"Тип: {info.get('type', 'unknown')}\n"
             f"Осталось ссылок: {info.get('remaining_links', 0)}\n"
             f"Действителен до: {info.get('expires', 'N/A')}\n\n"
-            f"**Вы уверены, что хотите удалить этот ключ?**",
+            f"<b>Вы уверены, что хотите удалить этот ключ?</b>",
             reply_markup=reply_markup,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
     else:
         try:
             supabase.table('keys').delete().eq('key_text', key).execute()
-            await update.message.reply_text(f"✅ Ключ `{key}` удалён (не был активирован)", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+            await update.message.reply_text(f"✅ Ключ <code>{key}</code> удалён (не был активирован)", reply_markup=get_admin_keyboard(), parse_mode="HTML")
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка удаления: {e}", reply_markup=get_admin_keyboard())
 
@@ -1271,7 +1271,7 @@ async def admin_confirm_delete_key_callback(update: Update, context: ContextType
         
         try:
             supabase.table('keys').delete().eq('key_text', key).execute()
-            await query.edit_message_text(f"✅ Ключ `{key}` успешно удалён!", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+            await query.edit_message_text(f"✅ Ключ <code>{key}</code> успешно удалён!", reply_markup=get_admin_keyboard(), parse_mode="HTML")
         except Exception as e:
             await query.edit_message_text(f"❌ Ошибка удаления ключа: {e}", reply_markup=get_admin_keyboard())
 
@@ -1357,12 +1357,12 @@ async def admin_list_screenshots(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("📭 Нет сохранённых скриншотов", reply_markup=get_admin_keyboard())
         return
     
-    text = "📸 **Список скриншотов:**\n\n"
+    text = "📸 <b>Список скриншотов:</b>\n\n"
     for s in screenshots:
-        text += f"🆔 ID: `{s['id']}` — {s['name']}\n"
+        text += f"🆔 ID: <code>{s['id']}</code> — {s['name']}\n"
     
-    text += "\n🗑️ Чтобы удалить, отправьте:\n`/admin_del_screenshot <ID>`"
-    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+    text += "\n🗑️ Чтобы удалить, отправьте:\n/admin_del_screenshot <ID>"
+    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
 
 async def admin_del_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -1445,21 +1445,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     
     elif data == "info":
-        text = """📋 **Информация о NFAvpn**
+        text = """📋 <b>Информация о NFAvpn</b>
 
-💰 **Цена:** 100 ₽ за 1 ключ (5 использований)
-🔄 **Гарантия:** Если ни одна ссылка не работает — выдаём новый ключ бесплатно!
-👤 **Админ:** @user123311a"""
-        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+💰 <b>Цена:</b> 100 ₽ за 1 ключ (5 использований)
+🔄 <b>Гарантия:</b> Если ни одна ссылка не работает — выдаём новый ключ бесплатно!
+👤 <b>Админ:</b> @user123311a"""
+        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
     
     elif data == "stats":
         result = stats_logic(user_id)
         if result.get("success"):
-            text = f"📊 **Ваша статистика:**\n\n"
+            text = f"📊 <b>Ваша статистика:</b>\n\n"
             text += f"Всего активных ключей: {result['active_keys_count']}\n"
             text += f"Осталось ссылок: {result['total_remaining']}\n"
             text += f"Всего доступно ссылок на сервере: {result['total_links_available']}\n"
-            await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+            await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
         else:
             await query.edit_message_text("❌ Не удалось получить статистику", reply_markup=get_main_keyboard())
     
@@ -1475,15 +1475,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 emoji = "✅" if entry["status"] == "да" else ("❌" if entry["status"] == "нет" else "⏳")
                 lines.append(f"{i}. {entry['link']} {emoji} ({entry['timestamp'][:16]})")
             await query.edit_message_text(
-                "📜 **Последние 10 ссылок:**\n" + "\n".join(lines),
+                "📜 <b>Последние 10 ссылок:</b>\n" + "\n".join(lines),
                 reply_markup=get_main_keyboard(),
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
         else:
             await query.edit_message_text(f"❌ {result.get('message', 'ошибка')}", reply_markup=get_main_keyboard())
     
     elif data == "help":
-        text = """❓ **Помощь**
+        text = """❓ <b>Помощь</b>
 
 📖 Доступные команды:
 /key <ключ> - активировать ключ
@@ -1493,7 +1493,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /info - информация о покупке
 
 👤 По всем вопросам: @user123311a"""
-        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
     
     # ========== АДМИН-КНОПКИ ==========
     elif is_admin(user_id):
@@ -1506,46 +1506,42 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_data_all = load_data()
                 total_issued = sum(len(data.get('used_links', [])) for data in user_data_all.values())
                 text = (
-                    f"📊 Общая статистика:\n"
+                    f"📊 <b>Общая статистика:</b>\n"
                     f"Всего ключей: {len(keys_all)}\n"
                     f"Пользователей: {len(users)}\n"
                     f"Ссылок в пуле: {total_links}\n"
                     f"Выдано ссылок: {total_issued}"
                 )
-                await query.edit_message_text(text, reply_markup=get_admin_keyboard())
+                await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
             except Exception as e:
                 await query.edit_message_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
         
-elif data == "admin_users":
-    user_keys = load_user_keys()
-    users_dict = {}
-    
-    for uk in user_keys:
-        uid = uk.get('owner_id')
-        if uid:
-            if uid not in users_dict:
-                users_dict[uid] = []
-            users_dict[uid].append(uk['key_text'])
-    
-    if not users_dict:
-        await query.edit_message_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
-        return
-    
-    text = "👥 <b>Пользователи и их ключи:</b>\n\n"
-    
-    for uid, keys in users_dict.items():
-        text += f"<b>🆔 {uid}</b> — {len(keys)} ключей\n"
-        for key in keys:
-            text += f"  🔑 <code>{key}</code>\n"
-        text += f"  👤 /admin_userinfo {uid}\n"
-        text += "\n"
-    
-    text += "\n💡 Нажмите на команду выше, чтобы открыть профиль пользователя"
-    await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
-        
-        elif data == "admin_userinfo":
-            # Это обрабатывается через команду, но на случай если кнопка
-            pass
+        elif data == "admin_users":
+            user_keys = load_user_keys()
+            users_dict = {}
+            
+            for uk in user_keys:
+                uid = uk.get('owner_id')
+                if uid:
+                    if uid not in users_dict:
+                        users_dict[uid] = []
+                    users_dict[uid].append(uk['key_text'])
+            
+            if not users_dict:
+                await query.edit_message_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
+                return
+            
+            text = "👥 <b>Пользователи и их ключи:</b>\n\n"
+            
+            for uid, keys in users_dict.items():
+                text += f"<b>🆔 {uid}</b> — {len(keys)} ключей\n"
+                for key in keys:
+                    text += f"  🔑 <code>{key}</code>\n"
+                text += f"  👤 /admin_userinfo {uid}\n"
+                text += "\n"
+            
+            text += "\n💡 Нажмите на команду выше, чтобы открыть профиль пользователя"
+            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
         
         elif data == "admin_create":
             await query.edit_message_text(
@@ -1567,11 +1563,11 @@ elif data == "admin_users":
             if not screenshots:
                 await query.edit_message_text("📭 Нет сохранённых скриншотов", reply_markup=get_admin_keyboard())
                 return
-            text = "📸 **Список скриншотов:**\n\n"
+            text = "📸 <b>Список скриншотов:</b>\n\n"
             for s in screenshots:
-                text += f"🆔 ID: `{s['id']}` — {s['name']}\n"
-            text += "\n🗑️ Чтобы удалить, отправьте:\n`/admin_del_screenshot <ID>`"
-            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+                text += f"🆔 ID: <code>{s['id']}</code> — {s['name']}\n"
+            text += "\n🗑️ Чтобы удалить, отправьте:\n/admin_del_screenshot <ID>"
+            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
         
         elif data == "admin_get":
             await query.edit_message_text(
@@ -1597,10 +1593,10 @@ elif data == "admin_users":
                 if not sorted_users:
                     await query.edit_message_text("Нет данных", reply_markup=get_admin_keyboard())
                     return
-                text = "🏆 Топ пользователей по выданным ссылкам:\n"
+                text = "🏆 <b>Топ пользователей по выданным ссылкам:</b>\n"
                 for idx, (uid, count) in enumerate(sorted_users[:10], 1):
                     text += f"{idx}. {uid} – {count} ссылок\n"
-                await query.edit_message_text(text, reply_markup=get_admin_keyboard())
+                await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
             except Exception as e:
                 await query.edit_message_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
         
@@ -1646,28 +1642,29 @@ elif data == "admin_users":
         
         elif data == "admin_help":
             await query.edit_message_text(
-                "🔐 Админ-команды:\n\n"
+                "🔐 <b>Админ-команды:</b>\n\n"
                 "/admin_stats - общая статистика\n"
                 "/admin_links - количество ссылок в пуле\n"
                 "/admin_users - список пользователей\n"
-                "/admin_userinfo <user_id> - профиль пользователя\n"
-                "/admin_create <тип> <кол-во> <лимит> - создать бессрочные ключи\n"
-                "/admin_deactivate <ключ> - деактивировать ключ\n"
-                "/admin_activate <ключ> - активировать ключ\n"
-                "/admin_refill <ключ> <количество> - пополнить остаток\n"
-                "/admin_deletekey <ключ> - удалить ключ\n"
-                "/admin_deleteuser <user_id> - удалить пользователя\n"
+                "/admin_userinfo &lt;user_id&gt; - профиль пользователя\n"
+                "/admin_create &lt;тип&gt; &lt;кол-во&gt; &lt;лимит&gt; - создать бессрочные ключи\n"
+                "/admin_deactivate &lt;ключ&gt; - деактивировать ключ\n"
+                "/admin_activate &lt;ключ&gt; - активировать ключ\n"
+                "/admin_refill &lt;ключ&gt; &lt;количество&gt; - пополнить остаток\n"
+                "/admin_deletekey &lt;ключ&gt; - удалить ключ\n"
+                "/admin_deleteuser &lt;user_id&gt; - удалить пользователя\n"
                 "/admin_addlinks - добавить ссылки (файл или текст)\n"
                 "/admin_linkstats - топ пользователей\n"
-                "/admin_get <количество> - получить N ссылок без ключа\n"
+                "/admin_get &lt;количество&gt; - получить N ссылок без ключа\n"
                 "/admin_add_screenshot - добавить скриншот для /info\n"
                 "/admin_list_screenshots - список скриншотов\n"
-                "/admin_del_screenshot <ID> - удалить скриншот\n"
+                "/admin_del_screenshot &lt;ID&gt; - удалить скриншот\n"
                 "/admin_all_keys - показать все ключи\n"
                 "/admin_delete_unused - удалить неиспользуемые ключи\n"
-                "/admin_confirm_delete_key <ключ> - удалить ключ с подтверждением\n"
+                "/admin_confirm_delete_key &lt;ключ&gt; - удалить ключ с подтверждением\n"
                 "/admin_help - это сообщение",
-                reply_markup=get_admin_keyboard()
+                reply_markup=get_admin_keyboard(),
+                parse_mode="HTML"
             )
         
         elif data == "admin_all_keys":
@@ -1683,10 +1680,10 @@ elif data == "admin_users":
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                "🔑 **Управление ключами**\n\n"
+                "🔑 <b>Управление ключами</b>\n\n"
                 "Выберите фильтр для отображения ключей:",
                 reply_markup=reply_markup,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
         
         elif data.startswith("admin_keys_"):
@@ -1710,13 +1707,13 @@ elif data == "admin_users":
                 )
                 return
             
-            text = f"🔑 **Всего ключей: {len(filtered_keys)}**\n\n"
-            text += "📋 **Список ключей:**\n"
+            text = f"🔑 <b>Всего ключей: {len(filtered_keys)}</b>\n\n"
+            text += "📋 <b>Список ключей:</b>\n"
             
             for key_text, info in filtered_keys[:50]:
                 status = "🟢 Активен" if info.get('active', True) else "🔴 Деактивирован"
                 owner = info.get('owner_id', 'Не привязан')
-                text += f"`{key_text}` — {status} | Владелец: {owner}\n"
+                text += f"<code>{key_text}</code> — {status} | Владелец: {owner}\n"
             
             if len(filtered_keys) > 50:
                 text += f"\n... и ещё {len(filtered_keys) - 50} ключей"
@@ -1735,14 +1732,14 @@ elif data == "admin_users":
             await query.edit_message_text(
                 text,
                 reply_markup=reply_markup,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
         
         elif data.startswith("confirm_delkey_"):
             key = data.replace("confirm_delkey_", "")
             try:
                 supabase.table('keys').delete().eq('key_text', key).execute()
-                await query.edit_message_text(f"✅ Ключ `{key}` успешно удалён!", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+                await query.edit_message_text(f"✅ Ключ <code>{key}</code> успешно удалён!", reply_markup=get_admin_keyboard(), parse_mode="HTML")
             except Exception as e:
                 await query.edit_message_text(f"❌ Ошибка удаления ключа: {e}", reply_markup=get_admin_keyboard())
         
@@ -1768,11 +1765,11 @@ elif data == "admin_users":
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                f"⚠️ Найдено **{len(unused_keys)}** неиспользуемых ключей.\n\n"
+                f"⚠️ Найдено <b>{len(unused_keys)}</b> неиспользуемых ключей.\n\n"
                 "Они будут удалены безвозвратно.\n"
                 "Вы уверены?",
                 reply_markup=reply_markup,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
         
         elif data == "confirm_delete_unused":
@@ -1786,9 +1783,9 @@ elif data == "admin_users":
                     except Exception as e:
                         print(f"❌ Ошибка удаления {key_text}: {e}")
             await query.edit_message_text(
-                f"✅ Удалено **{deleted_count}** неиспользуемых ключей!",
+                f"✅ Удалено <b>{deleted_count}</b> неиспользуемых ключей!",
                 reply_markup=get_admin_keyboard(),
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
         
         elif data == "cancel_delete_unused":
