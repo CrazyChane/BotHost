@@ -1,1228 +1,3092 @@
-import os
+from __future__ import annotations
+
 import asyncio
 import datetime
+import html
+import json
 import logging
-from typing import Optional, List, Dict, Any
+import os
 import secrets
 import string
+from collections import defaultdict
+from typing import Any, Callable
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from supabase import Client, create_client
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes,
-    MessageHandler, filters, ConversationHandler
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
 )
-from supabase import create_client, Client
 
-# ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
+
+# =========================================================
+# ЛОГИРОВАНИЕ
+# =========================================================
+
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
-logger = logging.getLogger(__name__)
 
-# ========== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ==========
+logger = logging.getLogger("nfavpn_bot")
+
+
+# =========================================================
+# КОНФИГУРАЦИЯ
+# =========================================================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-ADMIN_ID_STR = os.getenv("ADMIN_ID")
 
-# Проверка обязательных переменных
-for var_name, var_value in [("BOT_TOKEN", BOT_TOKEN), ("SUPABASE_URL", SUPABASE_URL),
-                              ("SUPABASE_KEY", SUPABASE_KEY), ("ADMIN_ID", ADMIN_ID_STR)]:
-    if not var_value:
-        raise ValueError(f"❌ Переменная окружения {var_name} не задана!")
+# Здесь должен находиться именно service_role key.
+SUPABASE_KEY = (
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    or os.getenv("SUPABASE_KEY")
+)
 
-ADMIN_ID = int(ADMIN_ID_STR)
+ADMIN_ID_RAW = os.getenv("ADMIN_ID")
 
-# ========== ИНИЦИАЛИЗАЦИЯ SUPABASE ==========
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+CONTACT_USERNAME = os.getenv(
+    "CONTACT_USERNAME",
+    "user123311a",
+).lstrip("@")
 
-logger.info("✅ Переменные окружения загружены")
-logger.info(f"🔑 ADMIN_ID: {ADMIN_ID}")
+BOT_USERNAME = os.getenv(
+    "BOT_USERNAME",
+    "NFAvpn_bot",
+).lstrip("@")
 
-# ========== АСИНХРОННЫЕ ОБЕРТКИ ДЛЯ SUPABASE ==========
-async def db_call(func, *args, **kwargs) -> Any:
-    """
-    Выполняет синхронный вызов Supabase в отдельном потоке.
-    Предотвращает блокировку асинхронного цикла.
-    """
-    try:
-        return await asyncio.to_thread(func, *args, **kwargs)
-    except Exception as e:
-        logger.error(f"Database error: {type(e).__name__}: {e}")
-        raise
+MAX_CREATE_KEYS = 100
+MAX_LINKS_PER_FILE = 5000
+MAX_LINK_LENGTH = 2048
+MAX_TEXT_FILE_SIZE = 2 * 1024 * 1024
+MAX_SCREENSHOT_NAME_LENGTH = 100
+TELEGRAM_TEXT_LIMIT = 3900
 
-# ========== ФУНКЦИИ РАБОТЫ С КЛЮЧАМИ ==========
-async def db_get_key(key_text: str) -> Optional[Dict[str, Any]]:
-    """Получить информацию о ключе"""
-    try:
-        response = await db_call(
-            lambda: supabase.table('keys')
-            .select('*')
-            .eq('key_text', key_text)
-            .execute()
+
+def require_environment() -> int:
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не задан")
+
+    if not SUPABASE_URL:
+        raise RuntimeError("SUPABASE_URL не задан")
+
+    if not SUPABASE_KEY:
+        raise RuntimeError(
+            "SUPABASE_SERVICE_ROLE_KEY не задан"
         )
-        return response.data[0] if response.data else None
-    except Exception as e:
-        logger.error(f"db_get_key error: {e}")
-        return None
 
-async def db_get_all_keys() -> List[Dict[str, Any]]:
-    """Получить все ключи (для админа)"""
+    if not ADMIN_ID_RAW:
+        raise RuntimeError("ADMIN_ID не задан")
+
     try:
-        response = await db_call(
-            lambda: supabase.table('keys').select('*').execute()
+        return int(ADMIN_ID_RAW)
+    except ValueError as error:
+        raise RuntimeError(
+            "ADMIN_ID должен быть целым числом"
+        ) from error
+
+
+ADMIN_ID = require_environment()
+
+CONTACT_URL = f"https://t.me/{CONTACT_USERNAME}"
+CONTACT_TEXT = f"@{CONTACT_USERNAME}"
+
+supabase: Client = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY,
+)
+
+
+# =========================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# =========================================================
+
+def is_admin(user_id: int | None) -> bool:
+    return user_id == ADMIN_ID
+
+
+def escape(value: Any) -> str:
+    return html.escape(str(value))
+
+
+def format_expiration(value: Any) -> str:
+    if not value:
+        return "бессрочно"
+    return str(value)
+
+
+def format_timestamp(value: Any) -> str:
+    if not value:
+        return "неизвестно"
+
+    return str(value).replace("T", " ")[:16]
+
+
+def status_text(status: str) -> str:
+    return {
+        "yes": "✅ Работает",
+        "no": "❌ Не работает",
+        "pending": "⏳ Ожидает проверки",
+    }.get(status, "❓ Неизвестно")
+
+
+def split_plain_text(
+    text: str,
+    limit: int = TELEGRAM_TEXT_LIMIT,
+) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+
+    for line in text.splitlines(keepends=True):
+        if len(line) > limit:
+            if current:
+                chunks.append(current.rstrip())
+                current = ""
+
+            for index in range(0, len(line), limit):
+                chunks.append(line[index:index + limit].rstrip())
+
+            continue
+
+        if len(current) + len(line) > limit:
+            chunks.append(current.rstrip())
+            current = line
+        else:
+            current += line
+
+    if current:
+        chunks.append(current.rstrip())
+
+    return chunks or [""]
+
+
+async def send_long_text(
+    message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    chunks = split_plain_text(text)
+
+    for index, chunk in enumerate(chunks):
+        markup = reply_markup if index == len(chunks) - 1 else None
+        await message.reply_text(
+            chunk,
+            reply_markup=markup,
+            disable_web_page_preview=True,
+        )
+
+
+async def safe_edit(
+    query,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    parse_mode: str | None = None,
+) -> None:
+    try:
+        await query.edit_message_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=True,
+        )
+    except BadRequest as error:
+        if "message is not modified" not in str(error).lower():
+            raise
+
+
+def parse_rpc_dict(data: Any) -> dict[str, Any]:
+    if isinstance(data, dict):
+        return data
+
+    if isinstance(data, list) and data:
+        if isinstance(data[0], dict):
+            return data[0]
+
+    if isinstance(data, str):
+        try:
+            parsed = json.loads(data)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    return {}
+
+
+# =========================================================
+# БАЗА ДАННЫХ
+# =========================================================
+
+class Database:
+    def __init__(self, client: Client):
+        self.client = client
+
+    async def _run(
+        self,
+        operation: Callable[[], Any],
+    ) -> Any:
+        """
+        supabase-py синхронный, поэтому запросы выполняются
+        в отдельном потоке и не блокируют Telegram-бота.
+        """
+        return await asyncio.to_thread(operation)
+
+    async def _rpc(
+        self,
+        function_name: str,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        response = await self._run(
+            lambda: self.client.rpc(
+                function_name,
+                params or {},
+            ).execute()
         )
         return response.data
-    except Exception as e:
-        logger.error(f"db_get_all_keys error: {e}")
-        return []
 
-async def db_create_key(key_text: str, key_type: str, max_links: int, 
-                        expires: str, active: bool = True) -> bool:
-    """Создать новый ключ"""
-    try:
-        await db_call(
-            lambda: supabase.table('keys')
-            .insert({
-                'key_text': key_text,
-                'type': key_type,
-                'max_links': max_links,
-                'expires': expires,
-                'active': active,
-                'owner_id': None,
-                'created': datetime.datetime.now().isoformat()
-            })
-            .execute()
+    async def activate_key(
+        self,
+        key_text: str,
+        owner_id: int,
+    ) -> dict[str, Any]:
+        data = await self._rpc(
+            "activate_key",
+            {
+                "p_key_text": key_text,
+                "p_owner_id": owner_id,
+            },
         )
-        logger.info(f"✅ Ключ создан: {key_text}")
-        return True
-    except Exception as e:
-        logger.error(f"db_create_key error: {e}")
-        return False
+        return parse_rpc_dict(data)
 
-async def db_bind_key_to_user(key_text: str, user_id: int) -> bool:
-    """Привязать ключ к пользователю"""
-    try:
-        await db_call(
-            lambda: supabase.table('keys')
-            .update({'owner_id': user_id})
-            .eq('key_text', key_text)
-            .execute()
+    async def issue_link(
+        self,
+        owner_id: int,
+    ) -> dict[str, Any]:
+        data = await self._rpc(
+            "issue_link",
+            {"p_owner_id": owner_id},
         )
-        logger.info(f"✅ Ключ {key_text} привязан к пользователю {user_id}")
-        return True
-    except Exception as e:
-        logger.error(f"db_bind_key_to_user error: {e}")
-        return False
+        return parse_rpc_dict(data)
 
-async def db_set_key_active(key_text: str, active: bool) -> bool:
-    """Активировать/деактивировать ключ"""
-    try:
-        await db_call(
-            lambda: supabase.table('keys')
-            .update({'active': active})
-            .eq('key_text', key_text)
-            .execute()
+    async def set_link_status(
+        self,
+        history_id: int,
+        owner_id: int,
+        status: str,
+    ) -> dict[str, Any]:
+        data = await self._rpc(
+            "set_link_status",
+            {
+                "p_history_id": history_id,
+                "p_owner_id": owner_id,
+                "p_status": status,
+            },
         )
-        return True
-    except Exception as e:
-        logger.error(f"db_set_key_active error: {e}")
-        return False
+        return parse_rpc_dict(data)
 
-async def db_delete_key(key_text: str) -> bool:
-    """Удалить ключ"""
-    try:
-        await db_call(
-            lambda: supabase.table('keys')
-            .delete()
-            .eq('key_text', key_text)
-            .execute()
+    async def get_user_stats(
+        self,
+        owner_id: int,
+    ) -> dict[str, Any]:
+        data = await self._rpc(
+            "get_user_stats",
+            {"p_owner_id": owner_id},
         )
-        logger.info(f"✅ Ключ удален: {key_text}")
-        return True
-    except Exception as e:
-        logger.error(f"db_delete_key error: {e}")
-        return False
+        return parse_rpc_dict(data)
 
-async def db_delete_unused_keys() -> int:
-    """Удалить все неиспользованные ключи"""
-    try:
-        keys = await db_get_all_keys()
-        deleted_count = 0
-        for key in keys:
-            if key.get('owner_id') is None:
-                if await db_delete_key(key['key_text']):
-                    deleted_count += 1
-        return deleted_count
-    except Exception as e:
-        logger.error(f"db_delete_unused_keys error: {e}")
-        return 0
+    async def get_admin_stats(self) -> dict[str, Any]:
+        data = await self._rpc("get_admin_stats")
+        return parse_rpc_dict(data)
 
-# ========== ФУНКЦИИ РАБОТЫ С ПОЛЬЗОВАТЕЛЬСКИМИ КЛЮЧАМИ ==========
-async def db_get_user_keys(user_id: int) -> List[Dict[str, Any]]:
-    """Получить ключи пользователя"""
-    try:
-        response = await db_call(
-            lambda: supabase.table('user_keys')
-            .select('*')
-            .eq('owner_id', user_id)
-            .execute()
+    async def refill_key(
+        self,
+        key_text: str,
+        amount: int,
+    ) -> dict[str, Any]:
+        data = await self._rpc(
+            "admin_refill_key",
+            {
+                "p_key_text": key_text,
+                "p_amount": amount,
+            },
         )
-        return response.data
-    except Exception as e:
-        logger.error(f"db_get_user_keys error: {e}")
-        return []
+        return parse_rpc_dict(data)
 
-async def db_save_user_key(key_text: str, owner_id: int, 
-                           remaining_links: int, expires: str) -> bool:
-    """Сохранить активированный ключ пользователя"""
-    try:
-        await db_call(
-            lambda: supabase.table('user_keys')
-            .insert({
-                'key_text': key_text,
-                'owner_id': owner_id,
-                'remaining_links': remaining_links,
-                'expires': expires
-            })
-            .execute()
+    async def delete_user(
+        self,
+        owner_id: int,
+    ) -> dict[str, Any]:
+        data = await self._rpc(
+            "admin_delete_user",
+            {"p_owner_id": owner_id},
         )
-        return True
-    except Exception as e:
-        logger.error(f"db_save_user_key error: {e}")
-        return False
+        return parse_rpc_dict(data)
 
-async def db_decrement_user_key(key_text: str, owner_id: int) -> Optional[int]:
-    """
-    Уменьшить оставшиеся ссылки пользователя на 1.
-    Возвращает новое значение или None при ошибке.
-    """
-    try:
-        # Получаем текущее значение
-        response = await db_call(
-            lambda: supabase.table('user_keys')
-            .select('remaining_links')
-            .eq('key_text', key_text)
-            .eq('owner_id', owner_id)
-            .execute()
+    async def delete_key(
+        self,
+        key_text: str,
+    ) -> dict[str, Any]:
+        data = await self._rpc(
+            "admin_delete_key",
+            {"p_key_text": key_text},
         )
-        
-        if not response.data:
-            return None
-            
-        current = response.data[0]['remaining_links']
-        if current <= 0:
-            return 0
-            
-        new_value = current - 1
-        
-        # Обновляем
-        await db_call(
-            lambda: supabase.table('user_keys')
-            .update({'remaining_links': new_value})
-            .eq('key_text', key_text)
-            .eq('owner_id', owner_id)
-            .execute()
-        )
-        
-        return new_value
-    except Exception as e:
-        logger.error(f"db_decrement_user_key error: {e}")
-        return None
+        return parse_rpc_dict(data)
 
-async def db_increment_user_key(key_text: str, owner_id: int, amount: int = 1) -> bool:
-    """Увеличить оставшиеся ссылки пользователя"""
-    try:
-        response = await db_call(
-            lambda: supabase.table('user_keys')
-            .select('remaining_links')
-            .eq('key_text', key_text)
-            .eq('owner_id', owner_id)
-            .execute()
+    async def delete_unused_keys(
+        self,
+    ) -> dict[str, Any]:
+        data = await self._rpc(
+            "admin_delete_unused_keys"
         )
-        
-        if not response.data:
-            return False
-            
-        current = response.data[0]['remaining_links']
-        new_value = current + amount
-        
-        await db_call(
-            lambda: supabase.table('user_keys')
-            .update({'remaining_links': new_value})
-            .eq('key_text', key_text)
-            .eq('owner_id', owner_id)
-            .execute()
-        )
-        
-        return True
-    except Exception as e:
-        logger.error(f"db_increment_user_key error: {e}")
-        return False
+        return parse_rpc_dict(data)
 
-# ========== ФУНКЦИИ РАБОТЫ СО ССЫЛКАМИ ==========
-async def db_get_link_count() -> int:
-    """Получить количество доступных ссылок"""
-    try:
-        response = await db_call(
-            lambda: supabase.table('links')
-            .select('url', count='exact')
-            .execute()
-        )
-        return response.count if hasattr(response, 'count') else len(response.data)
-    except Exception as e:
-        logger.error(f"db_get_link_count error: {e}")
-        return 0
+    async def add_links(
+        self,
+        urls: list[str],
+    ) -> int:
+        added = 0
+        batch_size = 500
 
-async def db_get_random_link() -> Optional[str]:
-    """
-    Получить случайную ссылку и удалить её.
-    Возвращает URL или None.
-    """
-    try:
-        # Получаем одну ссылку
-        response = await db_call(
-            lambda: supabase.table('links')
-            .select('id, url')
+        for offset in range(0, len(urls), batch_size):
+            batch = urls[offset:offset + batch_size]
+
+            data = await self._rpc(
+                "admin_add_links",
+                {"p_urls": batch},
+            )
+
+            result = parse_rpc_dict(data)
+            added += int(result.get("added", 0))
+
+        return added
+
+    async def take_links(
+        self,
+        count: int,
+    ) -> list[str]:
+        data = await self._rpc(
+            "admin_take_links",
+            {"p_count": count},
+        )
+
+        result: list[str] = []
+
+        for row in data or []:
+            if isinstance(row, dict) and row.get("url"):
+                result.append(str(row["url"]))
+            elif isinstance(row, str):
+                result.append(row)
+
+        return result
+
+    async def top_users(
+        self,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        data = await self._rpc(
+            "admin_top_users",
+            {"p_limit": limit},
+        )
+        return data or []
+
+    async def admin_user_info(
+        self,
+        owner_id: int,
+    ) -> list[dict[str, Any]]:
+        data = await self._rpc(
+            "admin_user_info",
+            {"p_owner_id": owner_id},
+        )
+        return data or []
+
+    async def count_links(self) -> int:
+        response = await self._run(
+            lambda: self.client.table("links")
+            .select("id", count="exact")
             .limit(1)
             .execute()
         )
-        
+        return int(response.count or 0)
+
+    async def get_history(
+        self,
+        owner_id: int,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        response = await self._run(
+            lambda: self.client.table("link_history")
+            .select(
+                "id,key_text,link,status,created_at"
+            )
+            .eq("owner_id", owner_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return response.data or []
+
+    async def get_all_user_keys(
+        self,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        page_size = 1000
+        offset = 0
+
+        while True:
+            response = await self._run(
+                lambda current_offset=offset: (
+                    self.client.table("user_keys")
+                    .select(
+                        "owner_id,key_text,"
+                        "remaining_links,expires"
+                    )
+                    .order("owner_id")
+                    .range(
+                        current_offset,
+                        current_offset + page_size - 1,
+                    )
+                    .execute()
+                )
+            )
+
+            page = response.data or []
+            rows.extend(page)
+
+            if len(page) < page_size:
+                break
+
+            offset += page_size
+
+        return rows
+
+    async def create_keys(
+        self,
+        rows: list[dict[str, Any]],
+    ) -> int:
+        response = await self._run(
+            lambda: self.client.table("keys")
+            .insert(rows)
+            .execute()
+        )
+
+        if response.data is None:
+            return len(rows)
+
+        return len(response.data)
+
+    async def get_key_details(
+        self,
+        key_text: str,
+    ) -> dict[str, Any] | None:
+        key_response = await self._run(
+            lambda: self.client.table("keys")
+            .select(
+                "key_text,type,expires,max_links,"
+                "active,owner_id,created"
+            )
+            .eq("key_text", key_text)
+            .limit(1)
+            .execute()
+        )
+
+        if not key_response.data:
+            return None
+
+        result = dict(key_response.data[0])
+
+        user_key_response = await self._run(
+            lambda: self.client.table("user_keys")
+            .select("owner_id,remaining_links,expires")
+            .eq("key_text", key_text)
+            .limit(1)
+            .execute()
+        )
+
+        result["user_key"] = (
+            user_key_response.data[0]
+            if user_key_response.data
+            else None
+        )
+
+        return result
+
+    async def set_key_active(
+        self,
+        key_text: str,
+        active: bool,
+    ) -> bool:
+        details = await self.get_key_details(key_text)
+
+        if not details:
+            return False
+
+        await self._run(
+            lambda: self.client.table("keys")
+            .update({"active": active})
+            .eq("key_text", key_text)
+            .execute()
+        )
+        return True
+
+    async def count_unused_keys(self) -> int:
+        response = await self._run(
+            lambda: self.client.table("keys")
+            .select("key_text", count="exact")
+            .is_("owner_id", "null")
+            .limit(1)
+            .execute()
+        )
+        return int(response.count or 0)
+
+    async def list_keys(
+        self,
+        active: bool | None,
+        limit: int = 50,
+    ) -> tuple[list[dict[str, Any]], int]:
+        def operation():
+            query = self.client.table("keys").select(
+                "key_text,type,expires,max_links,"
+                "active,owner_id,created",
+                count="exact",
+            )
+
+            if active is not None:
+                query = query.eq("active", active)
+
+            return (
+                query.order("created", desc=True)
+                .limit(limit)
+                .execute()
+            )
+
+        response = await self._run(operation)
+
+        return response.data or [], int(response.count or 0)
+
+    async def get_screenshots(
+        self,
+    ) -> list[dict[str, Any]]:
+        response = await self._run(
+            lambda: self.client.table("screenshots")
+            .select("id,name,file_id,created_at")
+            .order("id")
+            .execute()
+        )
+        return response.data or []
+
+    async def save_screenshot(
+        self,
+        name: str,
+        file_id: str,
+    ) -> bool:
+        response = await self._run(
+            lambda: self.client.table("screenshots")
+            .insert({
+                "name": name,
+                "file_id": file_id,
+            })
+            .execute()
+        )
+        return bool(response.data)
+
+    async def get_screenshot(
+        self,
+        screenshot_id: int,
+    ) -> dict[str, Any] | None:
+        response = await self._run(
+            lambda: self.client.table("screenshots")
+            .select("id,name,file_id")
+            .eq("id", screenshot_id)
+            .limit(1)
+            .execute()
+        )
+
         if not response.data:
             return None
-            
-        link_id = response.data[0]['id']
-        url = response.data[0]['url']
-        
-        # Удаляем ссылку
-        await db_call(
-            lambda: supabase.table('links')
-            .delete()
-            .eq('id', link_id)
-            .execute()
-        )
-        
-        return url
-    except Exception as e:
-        logger.error(f"db_get_random_link error: {e}")
-        return None
 
-async def db_add_links(links_list: List[str]) -> int:
-    """
-    Добавить ссылки в пул.
-    Возвращает количество добавленных ссылок.
-    """
-    added = 0
-    for url in links_list:
-        url = url.strip()
-        if not url:
-            continue
-        try:
-            await db_call(
-                lambda u=url: supabase.table('links')
-                .insert({'url': u})
-                .execute()
-            )
-            added += 1
-        except Exception as e:
-            logger.warning(f"Failed to add link {url}: {e}")
-            continue
-    
-    return added
+        return response.data[0]
 
-# ========== ФУНКЦИИ РАБОТЫ С ИСТОРИЕЙ ПОЛЬЗОВАТЕЛЯ ==========
-async def db_save_link_history(owner_id: int, key_text: str, link: str, 
-                                status: str = 'pending') -> bool:
-    """Сохранить использованную ссылку в историю"""
-    try:
-        entry = {
-            'link': link,
-            'status': status,
-            'timestamp': datetime.datetime.now().isoformat()
-        }
-        
-        # Проверяем, есть ли уже запись для этого пользователя и ключа
-        response = await db_call(
-            lambda: supabase.table('user_data')
-            .select('*')
-            .eq('owner_id', owner_id)
-            .eq('key_text', key_text)
-            .execute()
-        )
-        
-        if response.data:
-            # Обновляем существующую запись
-            row = response.data[0]
-            history = row.get('links_history', []) or []
-            history.append(entry)
-            
-            await db_call(
-                lambda: supabase.table('user_data')
-                .update({
-                    'links_history': history,
-                    'updated_at': datetime.datetime.now().isoformat()
-                })
-                .eq('owner_id', owner_id)
-                .eq('key_text', key_text)
-                .execute()
-            )
-        else:
-            # Создаем новую запись
-            await db_call(
-                lambda: supabase.table('user_data')
-                .insert({
-                    'owner_id': owner_id,
-                    'key_text': key_text,
-                    'links_history': [entry],
-                    'activated_at': datetime.datetime.now().isoformat()
-                })
-                .execute()
-            )
-        
-        return True
-    except Exception as e:
-        logger.error(f"db_save_link_history error: {e}")
-        return False
+    async def delete_screenshot(
+        self,
+        screenshot_id: int,
+    ) -> bool:
+        screenshot = await self.get_screenshot(screenshot_id)
 
-async def db_update_link_status(owner_id: int, key_text: str, 
-                                link: str, status: str) -> bool:
-    """Обновить статус последней ссылки"""
-    try:
-        response = await db_call(
-            lambda: supabase.table('user_data')
-            .select('links_history')
-            .eq('owner_id', owner_id)
-            .eq('key_text', key_text)
-            .execute()
-        )
-        
-        if not response.data:
+        if not screenshot:
             return False
-            
-        history = response.data[0].get('links_history', [])
-        
-        # Ищем запись с этой ссылкой и меняем статус
-        for entry in reversed(history):
-            if entry.get('link') == link and entry.get('status') == 'pending':
-                entry['status'] = status
-                break
-        
-        await db_call(
-            lambda: supabase.table('user_data')
-            .update({'links_history': history})
-            .eq('owner_id', owner_id)
-            .eq('key_text', key_text)
+
+        await self._run(
+            lambda: self.client.table("screenshots")
+            .delete()
+            .eq("id", screenshot_id)
             .execute()
         )
-        
         return True
-    except Exception as e:
-        logger.error(f"db_update_link_status error: {e}")
-        return False
 
-async def db_get_user_history(owner_id: int) -> List[Dict[str, Any]]:
-    """Получить историю пользователя"""
-    try:
-        response = await db_call(
-            lambda: supabase.table('user_data')
-            .select('links_history')
-            .eq('owner_id', owner_id)
-            .execute()
-        )
-        
-        all_history = []
-        for row in response.data:
-            history = row.get('links_history', [])
-            if history:
-                all_history.extend(history)
-        
-        # Сортируем по времени (новые первыми)
-        all_history.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        return all_history
-    except Exception as e:
-        logger.error(f"db_get_user_history error: {e}")
-        return []
 
-async def db_get_all_users() -> List[int]:
-    """Получить список всех ID пользователей"""
-    try:
-        response = await db_call(
-            lambda: supabase.table('user_keys')
-            .select('owner_id')
-            .execute()
-        )
-        
-        users = set()
-        for row in response.data:
-            if row.get('owner_id'):
-                users.add(row['owner_id'])
-        
-        return list(users)
-    except Exception as e:
-        logger.error(f"db_get_all_users error: {e}")
-        return []
+db = Database(supabase)
 
-async def db_delete_user(user_id: int) -> int:
-    """Удалить все данные пользователя"""
-    deleted = 0
-    try:
-        # Удаляем ключи пользователя
-        await db_call(
-            lambda: supabase.table('user_keys')
-            .delete()
-            .eq('owner_id', user_id)
-            .execute()
-        )
-        deleted += 1
-        
-        # Удаляем историю пользователя
-        await db_call(
-            lambda: supabase.table('user_data')
-            .delete()
-            .eq('owner_id', user_id)
-            .execute()
-        )
-        deleted += 1
-        
-        logger.info(f"✅ Пользователь {user_id} удален")
-    except Exception as e:
-        logger.error(f"db_delete_user error: {e}")
-    
-    return deleted
 
-# ========== ФУНКЦИИ СТАТИСТИКИ ==========
-async def get_user_stats(user_id: int) -> Dict[str, Any]:
-    """Получить статистику пользователя"""
-    try:
-        user_keys = await db_get_user_keys(user_id)
-        
-        total_remaining = sum(k['remaining_links'] for k in user_keys)
-        active_keys = [k for k in user_keys if k['remaining_links'] > 0]
-        
-        return {
-            "success": True,
-            "total_remaining": total_remaining,
-            "active_keys_count": len(active_keys),
-            "keys_info": user_keys
-        }
-    except Exception as e:
-        logger.error(f"get_user_stats error: {e}")
-        return {"success": False, "message": "Ошибка получения статистики"}
+# =========================================================
+# КЛАВИАТУРЫ
+# =========================================================
 
-async def get_admin_stats() -> Dict[str, Any]:
-    """Получить общую статистику для админа"""
-    try:
-        all_keys = await db_get_all_keys()
-        all_users = await db_get_all_users()
-        link_count = await db_get_link_count()
-        
-        used_links = 0
-        for key in all_keys:
-            # Подсчитываем выданные ссылки как (max_links - remaining в user_keys)
-            # Это приблизительно, так как user_keys может быть неполным
-            pass
-        
-        return {
-            "success": True,
-            "total_keys": len(all_keys),
-            "active_users": len(all_users),
-            "links_available": link_count
-        }
-    except Exception as e:
-        logger.error(f"get_admin_stats error: {e}")
-        return {"success": False}
-
-# ========== БИЗНЕС-ЛОГИКА: ВАЛИДАЦИЯ КЛЮЧА ==========
-async def validate_and_activate_key(key: str, user_id: int) -> Dict[str, Any]:
-    """
-    Валидировать и активировать ключ для пользователя.
-    """
-    if not key or not isinstance(key, str):
-        return {"success": False, "message": "Ключ не указан"}
-    
-    key = key.strip().upper()
-    
-    # Получаем информацию о ключе
-    key_info = await db_get_key(key)
-    if not key_info:
-        return {"success": False, "message": "❌ Неверный ключ"}
-    
-    # Проверяем, активен ли ключ
-    if not key_info.get('active', True):
-        return {"success": False, "message": "❌ Ключ деактивирован администратором"}
-    
-    # Проверяем, привязан ли ключ к другому пользователю
-    owner_id = key_info.get('owner_id')
-    if owner_id is not None and owner_id != user_id:
-        return {"success": False, "message": "❌ Ключ уже активирован на другом аккаунте"}
-    
-    # Проверяем, не активировал ли пользователь этот ключ уже
-    user_keys = await db_get_user_keys(user_id)
-    if any(uk['key_text'] == key for uk in user_keys):
-        return {"success": False, "message": "❌ Вы уже активировали этот ключ"}
-    
-    # Привязываем ключ к пользователю, если еще не привязан
-    if owner_id is None:
-        if not await db_bind_key_to_user(key, user_id):
-            return {"success": False, "message": "❌ Ошибка при привязке ключа"}
-    
-    # Получаем максимальное количество ссылок
-    max_links = key_info.get('max_links', 0)
-    if max_links <= 0:
-        return {"success": False, "message": "❌ Ключ имеет нулевой лимит ссылок"}
-    
-    # Сохраняем ключ в таблице user_keys
-    expires = key_info.get('expires', '')
-    if not await db_save_user_key(key, user_id, max_links, expires):
-        return {"success": False, "message": "❌ Ошибка при активации ключа"}
-    
-    logger.info(f"✅ Ключ {key} активирован для пользователя {user_id}")
-    
-    return {
-        "success": True,
-        "type": key_info.get('type', 'unknown'),
-        "expires": expires,
-        "max_links": max_links,
-        "message": f"✅ Ключ активирован! Добавлено {max_links} ссылок."
-    }
-
-# ========== БИЗНЕС-ЛОГИКА: ПОЛУЧЕНИЕ ССЫЛКИ ==========
-async def get_link_for_user(user_id: int) -> Dict[str, Any]:
-    """
-    Получить ссылку для пользователя.
-    """
-    # Получаем ключи пользователя
-    user_keys = await db_get_user_keys(user_id)
-    if not user_keys:
-        return {"success": False, "message": "❌ У вас нет активных ключей. Активируйте ключ командой /key"}
-    
-    # Ищем ключи с оставшимися ссылками
-    active_keys = [k for k in user_keys if k['remaining_links'] > 0]
-    if not active_keys:
-        return {"success": False, "message": "❌ У вас закончились ссылки. Купите новый ключ: @user123311a"}
-    
-    # Берем ключ с наибольшим остатком
-    chosen_key = max(active_keys, key=lambda x: x['remaining_links'])
-    key_text = chosen_key['key_text']
-    
-    # Получаем ссылку из пула
-    link = await db_get_random_link()
-    if not link:
-        return {"success": False, "message": "❌ Ссылки в пуле закончились. Админ скоро пополнит."}
-    
-    # Уменьшаем счетчик
-    new_remaining = await db_decrement_user_key(key_text, user_id)
-    if new_remaining is None:
-        # Возвращаем ссылку в пул
-        await db_add_links([link])
-        return {"success": False, "message": "❌ Ошибка при выдаче ссылки"}
-    
-    # Сохраняем в историю
-    await db_save_link_history(user_id, key_text, link, 'pending')
-    
-    logger.info(f"✅ Ссылка выдана пользователю {user_id}: {link}")
-    
-    return {
-        "success": True,
-        "link": link,
-        "remaining": new_remaining,
-        "key": key_text
-    }
-
-# ========== ФУНКЦИИ ГЕНЕРАЦИИ КЛЮЧЕЙ ==========
-def generate_key_string(key_type: str) -> tuple[str, str]:
-    """
-    Генерирует строку ключа и дату истечения.
-    Возвращает кортеж (key_string, expiry_date).
-    """
-    prefix = "FREE" if key_type.lower() == 'trial' else "PREMIUM"
-    year = datetime.datetime.now().year
-    random_part = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
-    key = f"{prefix}-{year}-{random_part}"
-    
-    # Срок действия - 365 дней от сегодня
-    expiry = (datetime.datetime.now() + datetime.timedelta(days=365)).strftime("%Y-%m-%d")
-    
-    return key, expiry
-
-async def create_keys_batch(count: int, key_type: str, max_links: int) -> List[str]:
-    """
-    Создать несколько ключей.
-    Возвращает список созданных ключей.
-    """
-    created = []
-    for _ in range(count):
-        key, expires = generate_key_string(key_type)
-        if await db_create_key(key, key_type, max_links, expires):
-            created.append(key)
-    return created
-
-# ========== КЛАВИАТУРЫ ==========
 def get_main_keyboard() -> InlineKeyboardMarkup:
-    """Главная клавиатура обычного пользователя"""
-    buttons = [
+    return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🛒 Купить ключ", url="https://t.me/user123311a"),
-            InlineKeyboardButton("📖 Информация", callback_data="info")
+            InlineKeyboardButton(
+                "🛒 Купить ключ",
+                url=CONTACT_URL,
+            ),
+            InlineKeyboardButton(
+                "📖 Информация",
+                callback_data="menu:info",
+            ),
         ],
         [
-            InlineKeyboardButton("📊 Статистика", callback_data="stats"),
-            InlineKeyboardButton("📜 История", callback_data="history")
+            InlineKeyboardButton(
+                "📎 Получить ссылку",
+                callback_data="menu:get",
+            ),
+            InlineKeyboardButton(
+                "📊 Статистика",
+                callback_data="menu:stats",
+            ),
         ],
         [
-            InlineKeyboardButton("❓ Помощь", callback_data="help")
-        ]
-    ]
-    return InlineKeyboardMarkup(buttons)
+            InlineKeyboardButton(
+                "📜 История",
+                callback_data="menu:history",
+            ),
+            InlineKeyboardButton(
+                "❓ Помощь",
+                callback_data="menu:help",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🏠 Главное меню",
+                callback_data="menu:start",
+            ),
+        ],
+    ])
+
 
 def get_admin_keyboard() -> InlineKeyboardMarkup:
-    """Главная клавиатура администратора"""
-    buttons = [
+    return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-            InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")
+            InlineKeyboardButton(
+                "📊 Общая статистика",
+                callback_data="admin:stats",
+            ),
+            InlineKeyboardButton(
+                "👥 Пользователи",
+                callback_data="admin:users",
+            ),
         ],
         [
-            InlineKeyboardButton("🔑 Создать ключи", callback_data="admin_create"),
-            InlineKeyboardButton("📤 Добавить ссылки", callback_data="admin_addlinks")
+            InlineKeyboardButton(
+                "🔑 Создать ключи",
+                callback_data="admin:create",
+            ),
+            InlineKeyboardButton(
+                "📤 Добавить ссылки",
+                callback_data="admin:addlinks",
+            ),
         ],
         [
-            InlineKeyboardButton("🔑 Все ключи", callback_data="admin_all_keys"),
-            InlineKeyboardButton("🗑️ Удалить неиспользованные", callback_data="admin_delete_unused")
+            InlineKeyboardButton(
+                "📎 Количество ссылок",
+                callback_data="admin:links",
+            ),
+            InlineKeyboardButton(
+                "🏆 Топ пользователей",
+                callback_data="admin:top",
+            ),
         ],
         [
-            InlineKeyboardButton("📖 Помощь", callback_data="admin_help"),
-            InlineKeyboardButton("🏠 Главное меню", callback_data="start")
-        ]
-    ]
-    return InlineKeyboardMarkup(buttons)
-
-# ========== ОБРАБОТЧИКИ КОМАНД ==========
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /start"""
-    is_admin = update.effective_user.id == ADMIN_ID
-    
-    text = """👋 Добро пожаловать в NFAvpn!
-
-🔑 <b>Как получить ключ:</b>
-1. Напишите администратору: @user123311a
-2. Оплатите заказ
-3. Активируйте ключ: /key <ключ>
-
-💰 <b>Цена:</b> 100 ₽ за 1 ключ (5 использований)
-
-🎉 <b>Гарантия:</b> Если ни одна ссылка не работает — новый ключ бесплатно!"""
-    
-    keyboard = get_admin_keyboard() if is_admin else get_main_keyboard()
-    await update.message.reply_text(text, reply_markup=keyboard, parse_mode="HTML")
-
-async def activate_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /key <ключ>"""
-    if not context.args:
-        await update.message.reply_text(
-            "❌ Укажите ключ после команды\n\n"
-            "Пример: <code>/key FREE-2024-ABCD1234</code>",
-            reply_markup=get_main_keyboard(),
-            parse_mode="HTML"
-        )
-        return
-    
-    key = ' '.join(context.args)
-    user_id = update.effective_user.id
-    
-    result = await validate_and_activate_key(key, user_id)
-    
-    if result['success']:
-        text = (f"✅ {result['message']}\n\n"
-                f"📋 <b>Детали:</b>\n"
-                f"Тип: {result['type']}\n"
-                f"Действителен до: {result['expires']}\n"
-                f"Добавлено ссылок: {result['max_links']}")
-        await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
-    else:
-        await update.message.reply_text(result['message'], reply_markup=get_main_keyboard())
-
-async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /get"""
-    user_id = update.effective_user.id
-    
-    result = await get_link_for_user(user_id)
-    
-    if not result['success']:
-        await update.message.reply_text(result['message'], reply_markup=get_main_keyboard())
-        return
-    
-    link = result['link']
-    remaining = result['remaining']
-    key = result['key']
-    
-    # Сохраняем для обновления статуса
-    context.user_data['last_link'] = link
-    context.user_data['last_key'] = key
-    
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Работает", callback_data="status_yes"),
-            InlineKeyboardButton("❌ Не работает", callback_data="status_no")
+            InlineKeyboardButton(
+                "🖼️ Скриншоты",
+                callback_data="admin:screens",
+            ),
+            InlineKeyboardButton(
+                "📎 Выдать ссылки",
+                callback_data="admin:get",
+            ),
         ],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="start")]
+        [
+            InlineKeyboardButton(
+                "🔓 Активировать ключ",
+                callback_data="admin:activate",
+            ),
+            InlineKeyboardButton(
+                "🔒 Деактивировать ключ",
+                callback_data="admin:deactivate",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Пополнить ключ",
+                callback_data="admin:refill",
+            ),
+            InlineKeyboardButton(
+                "🗑️ Удалить ключ",
+                callback_data="admin:deletekey",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🔑 Все ключи",
+                callback_data="admin:allkeys",
+            ),
+            InlineKeyboardButton(
+                "🗑️ Удалить неиспользуемые",
+                callback_data="admin:unused:ask",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "👤 Удалить пользователя",
+                callback_data="admin:deleteuser",
+            ),
+            InlineKeyboardButton(
+                "📋 Помощь",
+                callback_data="admin:help",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🏠 Главное меню",
+                callback_data="menu:start",
+            ),
+        ],
     ])
-    
-    text = (f"📎 <b>Ваша ссылка:</b>\n"
-            f"<code>{link}</code>\n\n"
-            f"📊 Осталось ссылок по этому ключу: <b>{remaining}</b>\n\n"
-            f"Пожалуйста, укажите, работает ли она:")
-    
-    await update.message.reply_text(text, reply_markup=keyboard, parse_mode="HTML")
 
-async def get_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /stat"""
-    user_id = update.effective_user.id
-    
-    result = await get_user_stats(user_id)
-    
-    if not result['success']:
-        await update.message.reply_text(result['message'], reply_markup=get_main_keyboard())
-        return
-    
-    text = (f"📊 <b>Ваша статистика:</b>\n\n"
-            f"Активных ключей: {result['active_keys_count']}\n"
-            f"Осталось ссылок: {result['total_remaining']}\n\n")
-    
-    if result['keys_info']:
-        text += "<b>🔑 Детали по ключам:</b>\n"
-        for key in result['keys_info']:
-            remaining = key['remaining_links']
-            key_text = key['key_text']
-            text += f"  <code>{key_text}</code> — {remaining} ссылок\n"
-    
-    await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
 
-async def get_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /history"""
-    user_id = update.effective_user.id
-    
-    history = await db_get_user_history(user_id)
-    
-    if not history:
-        await update.message.reply_text("📭 История пуста", reply_markup=get_main_keyboard())
-        return
-    
-    text = "📜 <b>Последние 10 ссылок:</b>\n\n"
-    
-    for i, entry in enumerate(history[:10], 1):
-        link = entry.get('link', 'unknown')
-        status = entry.get('status', 'unknown')
-        timestamp = entry.get('timestamp', '')[:16]
-        
-        status_emoji = "⏳" if status == "pending" else ("✅" if status == "да" else "❌")
-        
-        text += f"{i}. {link}\n"
-        text += f"   {status_emoji} {status} | {timestamp}\n\n"
-    
-    await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+def keyboard_for_user(user_id: int) -> InlineKeyboardMarkup:
+    if is_admin(user_id):
+        return get_admin_keyboard()
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /help"""
-    is_admin = update.effective_user.id == ADMIN_ID
-    
-    text = (f"❓ <b>Справка</b>\n\n"
-            f"<b>📖 Основные команды:</b>\n"
-            f"/key &lt;ключ&gt; - активировать ключ\n"
-            f"/get - получить ссылку\n"
-            f"/stat - статистика\n"
-            f"/history - история ссылок\n"
-            f"/help - эта справка\n\n"
-            f"<b>👤 Контакт администратора:</b>\n"
-            f"@user123311a")
-    
-    if is_admin:
-        text += (f"\n\n<b>🔐 Админ-команды:</b>\n"
-                f"/admin_create &lt;type&gt; &lt;count&gt; &lt;limit&gt; - создать ключи\n"
-                f"/admin_addlinks - добавить ссылки\n"
-                f"/admin_keys - управление ключами\n"
-                f"/admin_users - список пользователей")
-        kb = get_admin_keyboard()
-    else:
-        kb = get_main_keyboard()
-    
-    await update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
+    return get_main_keyboard()
 
-# ========== АДМИН КОМАНДЫ ==========
-async def admin_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_create"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Доступ запрещен")
-        return
-    
-    if len(context.args) < 3:
-        await update.message.reply_text(
-            "❌ Использование: /admin_create &lt;type&gt; &lt;count&gt; &lt;limit&gt;\n\n"
-            "Пример: /admin_create trial 5 10\n"
-            "  type: trial или premium\n"
-            "  count: количество ключей\n"
-            "  limit: максимум ссылок в ключе",
-            reply_markup=get_admin_keyboard(),
-            parse_mode="HTML"
-        )
-        return
-    
-    try:
-        key_type = context.args[0].strip().lower()
-        count = int(context.args[1])
-        max_links = int(context.args[2])
-        
-        if key_type not in ('trial', 'premium'):
-            await update.message.reply_text("❌ Тип: trial или premium", reply_markup=get_admin_keyboard())
-            return
-        
-        if count < 1 or max_links < 1:
-            await update.message.reply_text("❌ Значения должны быть больше 0", reply_markup=get_admin_keyboard())
-            return
-        
-        if count > 100:
-            await update.message.reply_text("❌ Максимум 100 ключей за раз", reply_markup=get_admin_keyboard())
-            return
-        
-        created = await create_keys_batch(count, key_type, max_links)
-        
-        text = f"✅ Создано {len(created)} ключей:\n\n"
-        text += "\n".join([f"<code>{k}</code>" for k in created])
-        
-        await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
-        logger.info(f"✅ Админ создал {len(created)} ключей типа {key_type}")
-        
-    except ValueError:
-        await update.message.reply_text("❌ Ошибка в формате команды", reply_markup=get_admin_keyboard())
 
-async def admin_addlinks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_addlinks"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Доступ запрещен")
-        return
-    
-    context.user_data['admin_waiting_links'] = True
-    await update.message.reply_text(
-        "📤 Отправьте файл .txt со ссылками или текстом\n\n"
-        "Одна ссылка на строку",
-        reply_markup=get_admin_keyboard()
+def status_keyboard(
+    history_id: int,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✅ Работает",
+                callback_data=f"status:yes:{history_id}",
+            ),
+            InlineKeyboardButton(
+                "❌ Не работает",
+                callback_data=f"status:no:{history_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🏠 Главное меню",
+                callback_data="menu:start",
+            ),
+        ],
+    ])
+
+
+def get_keys_filter_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🟢 Активные",
+                callback_data="admin:keys:active",
+            ),
+            InlineKeyboardButton(
+                "🔴 Неактивные",
+                callback_data="admin:keys:inactive",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "📋 Все ключи",
+                callback_data="admin:keys:all",
+            ),
+            InlineKeyboardButton(
+                "🏠 Назад",
+                callback_data="menu:start",
+            ),
+        ],
+    ])
+
+
+# =========================================================
+# ТЕКСТЫ И ОТОБРАЖЕНИЕ
+# =========================================================
+
+def main_menu_text() -> str:
+    return (
+        "👋 <b>Добро пожаловать в NFAvpn!</b>\n\n"
+        "Вы можете активировать несколько ключей "
+        "на одном Telegram-аккаунте.\n"
+        "Каждый ключ добавляет собственный лимит ссылок.\n\n"
+        "Для активации используйте:\n"
+        "<code>/key ВАШ-КЛЮЧ</code>\n\n"
+        f"По вопросам покупки: {escape(CONTACT_TEXT)}"
     )
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_stats"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Доступ запрещен")
-        return
-    
-    stats = await get_admin_stats()
-    
-    if not stats['success']:
-        await update.message.reply_text("❌ Ошибка при получении статистики", reply_markup=get_admin_keyboard())
-        return
-    
-    text = (f"📊 <b>Общая статистика:</b>\n\n"
-            f"Всего ключей: {stats['total_keys']}\n"
-            f"Активных пользователей: {stats['active_users']}\n"
-            f"Ссылок в пуле: {stats['links_available']}")
-    
-    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
 
-async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_users"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Доступ запрещен")
-        return
-    
-    users = await db_get_all_users()
-    
-    if not users:
-        await update.message.reply_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
-        return
-    
-    text = f"👥 <b>Пользователи ({len(users)}):</b>\n\n"
-    
-    for user_id in users[:20]:
-        user_keys = await db_get_user_keys(user_id)
-        remaining = sum(k['remaining_links'] for k in user_keys)
-        text += f"👤 {user_id} — {len(user_keys)} ключей, {remaining} ссылок\n"
-    
-    if len(users) > 20:
-        text += f"\n... и еще {len(users) - 20} пользователей"
-    
-    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
+def help_text(admin: bool = False) -> str:
+    text = (
+        "❓ <b>Доступные команды</b>\n\n"
+        "<code>/key КЛЮЧ</code> — активировать ключ\n"
+        "<code>/get</code> — получить ссылку\n"
+        "<code>/stat</code> — статистика\n"
+        "<code>/history</code> — история ссылок\n"
+        "<code>/info</code> — информация о покупке\n"
+        "<code>/help</code> — помощь\n"
+        "<code>/cancel</code> — отменить текущий ввод\n\n"
+        f"Поддержка: {escape(CONTACT_TEXT)}"
+    )
 
-async def admin_all_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_keys"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Доступ запрещен")
-        return
-    
-    all_keys = await db_get_all_keys()
-    
-    if not all_keys:
-        await update.message.reply_text("📭 Нет ключей", reply_markup=get_admin_keyboard())
-        return
-    
-    active = [k for k in all_keys if k.get('active', True)]
-    inactive = [k for k in all_keys if not k.get('active', True)]
-    
-    text = (f"🔑 <b>Ключи:</b>\n\n"
-            f"Всего: {len(all_keys)}\n"
-            f"🟢 Активных: {len(active)}\n"
-            f"🔴 Неактивных: {len(inactive)}\n\n"
-            f"<b>Последние 10 ключей:</b>\n")
-    
-    for key in all_keys[:10]:
-        status = "🟢" if key.get('active', True) else "🔴"
-        owner = key.get('owner_id', 'Не привязан')
-        text += f"{status} <code>{key['key_text']}</code> ({owner})\n"
-    
-    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
+    if admin:
+        text += (
+            "\n\n🔐 <b>Администратор:</b>\n"
+            "<code>/admin_help</code>"
+        )
 
-async def admin_delete_unused(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /admin_delete_unused"""
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Доступ запрещен")
+    return text
+
+
+def admin_help_text() -> str:
+    return (
+        "🔐 <b>Административные команды</b>\n\n"
+        "<code>/admin_stats</code> — общая статистика\n"
+        "<code>/admin_links</code> — количество ссылок\n"
+        "<code>/admin_users</code> — пользователи\n"
+        "<code>/admin_userinfo ID</code> — профиль\n\n"
+        "<code>/admin_create TYPE COUNT LIMIT</code>\n"
+        "Пример: <code>/admin_create premium 5 100</code>\n\n"
+        "<code>/admin_activate KEY</code>\n"
+        "<code>/admin_deactivate KEY</code>\n"
+        "<code>/admin_refill KEY AMOUNT</code>\n"
+        "<code>/admin_deletekey KEY</code>\n"
+        "<code>/admin_deleteuser ID</code>\n\n"
+        "<code>/admin_addlinks</code> — добавить ссылки\n"
+        "<code>/admin_get COUNT</code> — получить ссылки\n"
+        "<code>/admin_linkstats</code> — топ пользователей\n\n"
+        "<code>/admin_add_screenshot [название]</code>\n"
+        "<code>/admin_list_screenshots</code>\n"
+        "<code>/admin_del_screenshot ID</code>\n\n"
+        "<code>/admin_all_keys</code>\n"
+        "<code>/admin_delete_unused</code>\n"
+        "<code>/cancel</code> — отменить ввод"
+    )
+
+
+def info_text() -> str:
+    return (
+        "📋 <b>NFAvpn — информация</b>\n\n"
+        "<b>🔑 Как получить ключ:</b>\n"
+        f"1. Напишите администратору: {escape(CONTACT_TEXT)}\n"
+        "2. Укажите необходимое количество ключей\n"
+        "3. Оплатите заказ\n"
+        "4. Получите ключ и активируйте его командой:\n"
+        "<code>/key ВАШ-КЛЮЧ</code>\n\n"
+        "<b>💰 Стоимость:</b>\n"
+        "• 1 ключ на 5 использований — 100 ₽\n"
+        f"• Оптовые закупки — {escape(CONTACT_TEXT)}\n\n"
+        "<b>🔄 Гарантия:</b>\n"
+        "Если ни одна из пяти ссылок не работает, "
+        "обратитесь к администратору и приложите "
+        "подтверждающие скриншоты.\n\n"
+        "<b>📞 Контакты:</b>\n"
+        f"Администратор: {escape(CONTACT_TEXT)}\n"
+        f"Бот: @{escape(BOT_USERNAME)}"
+    )
+
+
+async def build_user_stats_text(
+    user_id: int,
+) -> str:
+    stats_result, total_pool = await asyncio.gather(
+        db.get_user_stats(user_id),
+        db.count_links(),
+    )
+
+    keys_info = stats_result.get("keys_info") or []
+
+    lines = [
+        "📊 Ваша статистика:",
+        "",
+        (
+            "Активных ключей: "
+            f"{stats_result.get('active_keys_count', 0)}"
+        ),
+        (
+            "Осталось использований: "
+            f"{stats_result.get('total_remaining', 0)}"
+        ),
+        f"Ссылок в общем пуле: {total_pool}",
+    ]
+
+    if keys_info:
+        lines.extend(["", "🔑 Ключи:"])
+
+        for item in keys_info:
+            active = bool(item.get("active"))
+            remaining = int(
+                item.get("remaining_links", 0)
+            )
+
+            marker = "🟢" if active and remaining > 0 else "🔴"
+
+            lines.append(
+                f"{marker} {item.get('key_text')} — "
+                f"осталось {remaining}, "
+                f"до {format_expiration(item.get('expires'))}"
+            )
+
+    return "\n".join(lines)
+
+
+async def build_history_text(
+    user_id: int,
+) -> str:
+    history_rows = await db.get_history(user_id, 10)
+
+    if not history_rows:
+        return "📭 История пуста"
+
+    lines = ["📜 Последние 10 ссылок:", ""]
+
+    for index, row in enumerate(history_rows, start=1):
+        lines.append(
+            f"{index}. {row.get('link')}\n"
+            f"   {status_text(str(row.get('status')))} | "
+            f"{format_timestamp(row.get('created_at'))}"
+        )
+
+    return "\n".join(lines)
+
+
+async def send_info_content(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    edit: bool = False,
+) -> None:
+    user_id = update.effective_user.id
+    keyboard = keyboard_for_user(user_id)
+
+    if edit and update.callback_query:
+        await safe_edit(
+            update.callback_query,
+            info_text(),
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await update.effective_message.reply_text(
+            info_text(),
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    screenshots = await db.get_screenshots()
+
+    for screenshot in screenshots:
+        try:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=screenshot["file_id"],
+                caption=str(screenshot["name"])[:1024],
+            )
+        except Exception:
+            logger.exception(
+                "Не удалось отправить скриншот id=%s",
+                screenshot.get("id"),
+            )
+
+
+# =========================================================
+# ПОЛЬЗОВАТЕЛЬСКИЕ КОМАНДЫ
+# =========================================================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    user_id = update.effective_user.id
+
+    await update.message.reply_text(
+        main_menu_text(),
+        reply_markup=keyboard_for_user(user_id),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    user_id = update.effective_user.id
+
+    await update.message.reply_text(
+        help_text(is_admin(user_id)),
+        reply_markup=keyboard_for_user(user_id),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def info_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    await send_info_content(update, context)
+
+
+async def set_key(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Укажите ключ.\n\n"
+            "Пример:\n"
+            "/key PREMIUM-2026-ABC123",
+            reply_markup=get_main_keyboard(),
+        )
         return
-    
+
+    key_text = context.args[0].strip().upper()
+
+    if len(key_text) > 200:
+        await update.message.reply_text(
+            "❌ Слишком длинный ключ",
+            reply_markup=get_main_keyboard(),
+        )
+        return
+
+    result = await db.activate_key(
+        key_text,
+        update.effective_user.id,
+    )
+
+    if result.get("success"):
+        await update.message.reply_text(
+            "✅ Ключ успешно активирован!\n\n"
+            f"Ключ: {result.get('key_text')}\n"
+            f"Тип: {result.get('type')}\n"
+            f"Срок: {format_expiration(result.get('expires'))}\n"
+            f"Добавлено использований: "
+            f"{result.get('max_links', 0)}",
+            reply_markup=get_main_keyboard(),
+        )
+        return
+
+    error_messages = {
+        "empty_key": "Ключ не указан",
+        "invalid_key": "Неверный ключ",
+        "inactive_key": "Ключ деактивирован",
+        "expired_key": "Срок действия ключа истёк",
+        "empty_limit": "В ключе нет доступных использований",
+        "owned_by_another": (
+            "Ключ уже активирован другим пользователем"
+        ),
+        "already_activated": (
+            "Этот ключ уже активирован вами"
+        ),
+    }
+
+    code = str(result.get("code"))
+
+    await update.message.reply_text(
+        f"❌ {error_messages.get(code, 'Ошибка активации ключа')}",
+        reply_markup=get_main_keyboard(),
+    )
+
+
+async def send_issued_link_to_message(
+    update: Update,
+) -> None:
+    result = await db.issue_link(
+        update.effective_user.id
+    )
+
+    if not result.get("success"):
+        messages = {
+            "no_active_keys": (
+                "Нет активных ключей с доступным лимитом"
+            ),
+            "no_links": (
+                "Ссылки временно закончились. "
+                "Лимит ключа не был списан."
+            ),
+        }
+
+        await update.message.reply_text(
+            f"❌ {messages.get(result.get('code'), 'Ошибка выдачи')}",
+            reply_markup=get_main_keyboard(),
+        )
+        return
+
+    await update.message.reply_text(
+        "📎 Ваша ссылка:\n"
+        f"{result.get('link')}\n\n"
+        f"Ключ: {result.get('key_text')}\n"
+        f"Осталось использований: "
+        f"{result.get('remaining', 0)}\n\n"
+        "Пожалуйста, укажите, работает ли ссылка:",
+        reply_markup=status_keyboard(
+            int(result["history_id"])
+        ),
+        disable_web_page_preview=True,
+    )
+
+
+async def get_link(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    await send_issued_link_to_message(update)
+
+
+async def stats_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    text = await build_user_stats_text(
+        update.effective_user.id
+    )
+
+    await update.message.reply_text(
+        text,
+        reply_markup=get_main_keyboard(),
+    )
+
+
+async def history_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    text = await build_history_text(
+        update.effective_user.id
+    )
+
+    await update.message.reply_text(
+        text,
+        reply_markup=get_main_keyboard(),
+        disable_web_page_preview=True,
+    )
+
+
+async def cancel_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    had_state = context.user_data.pop(
+        "input_state",
+        None,
+    )
+
+    if had_state:
+        text = "✅ Текущий ввод отменён"
+    else:
+        text = "ℹ️ Нет активного ввода"
+
+    await update.message.reply_text(
+        text,
+        reply_markup=keyboard_for_user(
+            update.effective_user.id
+        ),
+    )
+
+
+# =========================================================
+# ПРОВЕРКА АДМИНИСТРАТОРА
+# =========================================================
+
+async def require_admin(
+    update: Update,
+) -> bool:
+    if is_admin(update.effective_user.id):
+        return True
+
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            "⛔ Доступ запрещён"
+        )
+
+    return False
+
+
+# =========================================================
+# АДМИНИСТРАТИВНЫЕ КОМАНДЫ
+# =========================================================
+
+async def admin_help(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    await update.message.reply_text(
+        admin_help_text(),
+        reply_markup=get_admin_keyboard(),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def admin_stats(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    result = await db.get_admin_stats()
+
+    text = (
+        "📊 Общая статистика:\n\n"
+        f"Всего ключей: {result.get('total_keys', 0)}\n"
+        f"Пользователей: {result.get('total_users', 0)}\n"
+        f"Ссылок в пуле: {result.get('total_links', 0)}\n"
+        f"Выдано ссылок: {result.get('total_issued', 0)}"
+    )
+
+    await update.message.reply_text(
+        text,
+        reply_markup=get_admin_keyboard(),
+    )
+
+
+async def admin_links(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    count = await db.count_links()
+
+    await update.message.reply_text(
+        f"🔗 Ссылок в пуле: {count}",
+        reply_markup=get_admin_keyboard(),
+    )
+
+
+def render_users(
+    rows: list[dict[str, Any]],
+    max_length: int | None = None,
+) -> str:
+    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+
+    for row in rows:
+        owner_id = row.get("owner_id")
+
+        if owner_id is not None:
+            grouped[int(owner_id)].append(row)
+
+    if not grouped:
+        return "👥 Нет пользователей"
+
+    lines = ["👥 Пользователи и ключи:", ""]
+
+    for owner_id, keys in grouped.items():
+        lines.append(
+            f"🆔 {owner_id} — ключей: {len(keys)}"
+        )
+
+        for item in keys:
+            lines.append(
+                f"  🔑 {item.get('key_text')} — "
+                f"{item.get('remaining_links', 0)}"
+            )
+
+        lines.append(
+            f"  /admin_userinfo {owner_id}"
+        )
+        lines.append("")
+
+        if max_length:
+            current_text = "\n".join(lines)
+
+            if len(current_text) > max_length:
+                lines.append("... список сокращён")
+                break
+
+    return "\n".join(lines)
+
+
+async def admin_users(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    rows = await db.get_all_user_keys()
+    text = render_users(rows)
+
+    await send_long_text(
+        update.message,
+        text,
+        get_admin_keyboard(),
+    )
+
+
+async def admin_userinfo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Использование:\n"
+            "/admin_userinfo USER_ID",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    try:
+        user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ ID должен быть числом",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    rows = await db.admin_user_info(user_id)
+
+    if not rows:
+        await update.message.reply_text(
+            "❌ Пользователь не найден или у него нет ключей",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    lines = [
+        "👤 Профиль пользователя",
+        f"🆔 ID: {user_id}",
+        f"🔑 Ключей: {len(rows)}",
+        "",
+    ]
+
+    total_remaining = 0
+
+    for row in rows:
+        remaining = int(row.get("remaining_links", 0))
+        total_remaining += remaining
+
+        lines.extend([
+            f"🔑 {row.get('key_text')}",
+            f"   Осталось: {remaining}",
+            (
+                "   Срок: "
+                f"{format_expiration(row.get('expires'))}"
+            ),
+            (
+                "   Состояние: "
+                f"{'активен' if row.get('active') else 'неактивен'}"
+            ),
+        ])
+
+        if row.get("last_link"):
+            lines.extend([
+                f"   Последняя ссылка: {row.get('last_link')}",
+                (
+                    "   Статус: "
+                    f"{status_text(str(row.get('last_status')))}"
+                ),
+                (
+                    "   Дата: "
+                    f"{format_timestamp(row.get('last_created_at'))}"
+                ),
+            ])
+
+        lines.append("")
+
+    lines.append(
+        f"📊 Всего осталось: {total_remaining}"
+    )
+
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ Да, удалить", callback_data="admin_confirm_delete_unused"),
-            InlineKeyboardButton("❌ Отмена", callback_data="start")
-        ]
+            InlineKeyboardButton(
+                "🗑️ Удалить пользователя",
+                callback_data=f"admin:deluser:ask:{user_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🏠 Главное меню",
+                callback_data="menu:start",
+            ),
+        ],
     ])
-    
-    all_keys = await db_get_all_keys()
-    unused = [k for k in all_keys if k.get('owner_id') is None]
-    
-    if not unused:
-        await update.message.reply_text("📭 Нет неиспользованных ключей", reply_markup=get_admin_keyboard())
-        return
-    
-    text = f"⚠️ Найдено {len(unused)} неиспользованных ключей.\nОни будут удалены безвозвратно!\n\nВы уверены?"
-    await update.message.reply_text(text, reply_markup=keyboard)
 
-# ========== CALLBACK QUERIES ==========
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик всех callback кнопок"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = update.effective_user.id
-    is_admin = user_id == ADMIN_ID
-    data = query.data
-    
-    # ===== ОСНОВНЫЕ КНОПКИ =====
-    if data == "start":
-        text = "👋 Главное меню"
-        kb = get_admin_keyboard() if is_admin else get_main_keyboard()
-        await query.edit_message_text(text, reply_markup=kb)
-    
-    elif data == "info":
-        text = (f"📖 <b>Информация о NFAvpn</b>\n\n"
-                f"💰 <b>Цена:</b> 100 ₽ за 1 ключ (5 использований)\n"
-                f"🔑 <b>Тип:</b> Временный доступ\n"
-                f"⏰ <b>Срок:</b> 1 год\n\n"
-                f"🎉 <b>Гарантия:</b>\n"
-                f"Если ни одна из 5 ссылок не работает\n"
-                f"→ Выдаем новый ключ бесплатно!\n\n"
-                f"👤 <b>Контакт:</b> @user123311a")
-        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
-    
-    elif data == "stats":
-        result = await get_user_stats(user_id)
-        if result['success']:
-            text = (f"📊 <b>Ваша статистика:</b>\n\n"
-                    f"Активных ключей: {result['active_keys_count']}\n"
-                    f"Осталось ссылок: {result['total_remaining']}")
-        else:
-            text = "❌ Ошибка получения статистики"
-        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
-    
-    elif data == "history":
-        history = await db_get_user_history(user_id)
-        if not history:
-            text = "📭 История пуста"
-        else:
-            text = "📜 <b>Последние 5 ссылок:</b>\n\n"
-            for i, entry in enumerate(history[:5], 1):
-                link = entry.get('link', 'unknown')[:40]
-                status_emoji = "⏳" if entry.get('status') == "pending" else ("✅" if entry.get('status') == "да" else "❌")
-                text += f"{i}. {link}... {status_emoji}\n"
-        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
-    
-    elif data == "help":
-        text = (f"❓ <b>Справка</b>\n\n"
-                f"/key &lt;ключ&gt; - активировать ключ\n"
-                f"/get - получить ссылку\n"
-                f"/stat - статистика\n"
-                f"/history - история\n\n"
-                f"👤 @user123311a")
-        await query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="HTML")
-    
-    # ===== СТАТУСЫ ССЫЛОК =====
-    elif data in ("status_yes", "status_no"):
-        status = "да" if data == "status_yes" else "нет"
-        link = context.user_data.get('last_link')
-        key = context.user_data.get('last_key')
-        
-        if link and key:
-            await db_update_link_status(user_id, key, link, status)
-            msg = "✅ Статус сохранен" if status == "да" else "❌ Спасибо, мы улучшим"
-            await query.edit_message_text(msg, reply_markup=get_main_keyboard())
-        else:
-            await query.edit_message_text("❌ Ошибка", reply_markup=get_main_keyboard())
-    
-    # ===== АДМИН КНОПКИ =====
-    elif is_admin:
-        if data == "admin_stats":
-            stats = await get_admin_stats()
-            text = (f"📊 <b>Статистика:</b>\n"
-                    f"Ключей: {stats.get('total_keys', 0)}\n"
-                    f"Пользователей: {stats.get('active_users', 0)}\n"
-                    f"Ссылок в пуле: {stats.get('links_available', 0)}")
-            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
-        
-        elif data == "admin_users":
-            users = await db_get_all_users()
-            if users:
-                text = f"👥 Пользователей: {len(users)}\n\nИспользуйте /admin_users для подробностей"
-            else:
-                text = "👥 Пользователей не найдено"
-            await query.edit_message_text(text, reply_markup=get_admin_keyboard())
-        
-        elif data == "admin_create":
-            text = ("🔑 <b>Создание ключей</b>\n\n"
-                    "Команда: /admin_create &lt;type&gt; &lt;count&gt; &lt;limit&gt;\n\n"
-                    "Пример: /admin_create trial 5 10")
-            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
-        
-        elif data == "admin_addlinks":
-            await query.edit_message_text(
-                "📤 Отправьте файл или текст со ссылками",
-                reply_markup=get_admin_keyboard()
-            )
-            context.user_data['admin_waiting_links'] = True
-        
-        elif data == "admin_all_keys":
-            all_keys = await db_get_all_keys()
-            if all_keys:
-                active = sum(1 for k in all_keys if k.get('active', True))
-                text = (f"🔑 <b>Ключи:</b>\n"
-                        f"Всего: {len(all_keys)}\n"
-                        f"🟢 Активных: {active}\n"
-                        f"🔴 Неактивных: {len(all_keys) - active}")
-            else:
-                text = "📭 Ключей не найдено"
-            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
-        
-        elif data == "admin_delete_unused":
-            unused = [k for k in await db_get_all_keys() if k.get('owner_id') is None]
-            if unused:
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ Да", callback_data="admin_confirm_delete_unused"),
-                     InlineKeyboardButton("❌ Нет", callback_data="start")]
-                ])
-                await query.edit_message_text(
-                    f"⚠️ Удалить {len(unused)} неиспользованных ключей?",
-                    reply_markup=kb
-                )
-            else:
-                await query.edit_message_text("📭 Нет неиспользованных ключей", reply_markup=get_admin_keyboard())
-        
-        elif data == "admin_confirm_delete_unused":
-            deleted = await db_delete_unused_keys()
-            await query.edit_message_text(
-                f"✅ Удалено {deleted} ключей",
-                reply_markup=get_admin_keyboard()
-            )
-        
-        elif data == "admin_help":
-            text = (f"🔐 <b>Админ-команды:</b>\n\n"
-                    f"/admin_create - создать ключи\n"
-                    f"/admin_addlinks - добавить ссылки\n"
-                    f"/admin_stats - статистика\n"
-                    f"/admin_users - пользователи\n"
-                    f"/admin_keys - управление ключами")
-            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
+    await send_long_text(
+        update.message,
+        "\n".join(lines),
+        keyboard,
+    )
 
-# ========== ОБРАБОТКА ФАЙЛОВ И ТЕКСТА ==========
-async def handle_file_or_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик файлов и текста для администратора"""
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
+
+def generate_key(key_type: str) -> str:
+    prefix = "FREE" if key_type == "trial" else "PREMIUM"
+    year = datetime.datetime.now(
+        datetime.timezone.utc
+    ).year
+
+    alphabet = string.ascii_uppercase + string.digits
+
+    random_part = "".join(
+        secrets.choice(alphabet)
+        for _ in range(12)
+    )
+
+    return f"{prefix}-{year}-{random_part}"
+
+
+async def admin_create(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
         return
-    
-    if not context.user_data.get('admin_waiting_links'):
+
+    if len(context.args) != 3:
+        await update.message.reply_text(
+            "Использование:\n"
+            "/admin_create TYPE COUNT LIMIT\n\n"
+            "Пример:\n"
+            "/admin_create premium 5 100\n\n"
+            "TYPE: trial или premium",
+            reply_markup=get_admin_keyboard(),
+        )
         return
-    
-    links = []
-    
-    # Обработка файла
-    if update.message.document:
-        try:
-            file = await update.message.document.get_file()
-            content = await file.download_as_bytearray()
-            links = [line.decode('utf-8').strip() for line in content.split(b'\n') if line.strip()]
-        except Exception as e:
-            logger.error(f"File processing error: {e}")
-            await update.message.reply_text("❌ Ошибка обработки файла", reply_markup=get_admin_keyboard())
-            return
-    
-    # Обработка текста
-    elif update.message.text and not update.message.text.startswith('/'):
-        links = [line.strip() for line in update.message.text.splitlines() if line.strip()]
-    
+
+    key_type = context.args[0].lower().strip()
+
+    if key_type not in {"trial", "premium"}:
+        await update.message.reply_text(
+            "❌ Тип должен быть trial или premium",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    try:
+        count = int(context.args[1])
+        max_links = int(context.args[2])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ COUNT и LIMIT должны быть числами",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    if not 1 <= count <= MAX_CREATE_KEYS:
+        await update.message.reply_text(
+            f"❌ Можно создать от 1 до "
+            f"{MAX_CREATE_KEYS} ключей за раз",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    if not 1 <= max_links <= 10_000_000:
+        await update.message.reply_text(
+            "❌ Лимит должен быть от 1 до 10000000",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    now = datetime.datetime.now(
+        datetime.timezone.utc
+    ).isoformat()
+
+    keys = [generate_key(key_type) for _ in range(count)]
+
+    rows = [
+        {
+            "key_text": key,
+            "type": key_type,
+            "expires": None,
+            "max_links": max_links,
+            "active": True,
+            "owner_id": None,
+            "created": now,
+        }
+        for key in keys
+    ]
+
+    created_count = await db.create_keys(rows)
+
+    text = (
+        f"✅ Создано ключей: {created_count}\n\n"
+        + "\n".join(keys)
+    )
+
+    await send_long_text(
+        update.message,
+        text,
+        get_admin_keyboard(),
+    )
+
+
+async def change_key_active(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    active: bool,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    if not context.args:
+        command = (
+            "/admin_activate KEY"
+            if active
+            else "/admin_deactivate KEY"
+        )
+
+        await update.message.reply_text(
+            f"Использование:\n{command}",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    key_text = context.args[0].strip().upper()
+    updated = await db.set_key_active(key_text, active)
+
+    if not updated:
+        await update.message.reply_text(
+            "❌ Ключ не найден",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    action = "активирован" if active else "деактивирован"
+
+    await update.message.reply_text(
+        f"✅ Ключ {key_text} {action}",
+        reply_markup=get_admin_keyboard(),
+    )
+
+
+async def admin_activate(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    await change_key_active(
+        update,
+        context,
+        active=True,
+    )
+
+
+async def admin_deactivate(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    await change_key_active(
+        update,
+        context,
+        active=False,
+    )
+
+
+async def admin_refill(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    if len(context.args) != 2:
+        await update.message.reply_text(
+            "Использование:\n"
+            "/admin_refill KEY AMOUNT",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    key_text = context.args[0].strip().upper()
+
+    try:
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Количество должно быть числом",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    if amount <= 0:
+        await update.message.reply_text(
+            "❌ Количество должно быть больше нуля",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    result = await db.refill_key(key_text, amount)
+
+    if not result.get("success"):
+        await update.message.reply_text(
+            "❌ Ключ не активирован пользователем",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    await update.message.reply_text(
+        f"✅ Добавлено: {amount}\n"
+        f"Текущий остаток: {result.get('remaining', 0)}",
+        reply_markup=get_admin_keyboard(),
+    )
+
+
+async def admin_deletekey(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Использование:\n"
+            "/admin_deletekey KEY",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    key_text = context.args[0].strip().upper()
+    details = await db.get_key_details(key_text)
+
+    if not details:
+        await update.message.reply_text(
+            "❌ Ключ не найден",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    token = secrets.token_urlsafe(8)
+
+    pending = context.user_data.setdefault(
+        "pending_key_deletes",
+        {},
+    )
+    pending.clear()
+    pending[token] = key_text
+
+    user_key = details.get("user_key") or {}
+    owner_id = details.get("owner_id")
+    remaining = user_key.get("remaining_links", 0)
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✅ Да, удалить",
+                callback_data=f"admin:delkey:yes:{token}",
+            ),
+            InlineKeyboardButton(
+                "❌ Отмена",
+                callback_data=f"admin:delkey:no:{token}",
+            ),
+        ],
+    ])
+
+    await update.message.reply_text(
+        "⚠️ Подтвердите удаление ключа\n\n"
+        f"Ключ: {key_text}\n"
+        f"Владелец: {owner_id or 'не привязан'}\n"
+        f"Осталось: {remaining}\n\n"
+        "История выданных ссылок сохранится, "
+        "но ключ и его остаток будут удалены.",
+        reply_markup=keyboard,
+    )
+
+
+async def admin_deleteuser(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Использование:\n"
+            "/admin_deleteuser USER_ID",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    try:
+        user_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ ID должен быть числом",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✅ Да, удалить",
+                callback_data=f"admin:deluser:yes:{user_id}",
+            ),
+            InlineKeyboardButton(
+                "❌ Отмена",
+                callback_data="admin:cancel",
+            ),
+        ],
+    ])
+
+    await update.message.reply_text(
+        f"⚠️ Удалить пользователя {user_id}?\n\n"
+        "Будут удалены его ключи и история. "
+        "Исходные ключи снова станут непривязанными.",
+        reply_markup=keyboard,
+    )
+
+
+async def admin_addlinks(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    context.user_data["input_state"] = {
+        "mode": "links"
+    }
+
+    await update.message.reply_text(
+        "📤 Отправьте текстовый файл .txt "
+        "или список ссылок текстом.\n\n"
+        "Одна ссылка — одна строка.\n"
+        "Для отмены: /cancel",
+        reply_markup=get_admin_keyboard(),
+    )
+
+
+async def admin_delete_unused(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    count = await db.count_unused_keys()
+
+    if count == 0:
+        await update.message.reply_text(
+            "📭 Неиспользуемых ключей нет",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✅ Удалить все",
+                callback_data="admin:unused:yes",
+            ),
+            InlineKeyboardButton(
+                "❌ Отмена",
+                callback_data="admin:cancel",
+            ),
+        ],
+    ])
+
+    await update.message.reply_text(
+        f"⚠️ Найдено неиспользуемых ключей: {count}\n\n"
+        "Удалить их безвозвратно?",
+        reply_markup=keyboard,
+    )
+
+
+async def admin_linkstats(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    rows = await db.top_users(10)
+
+    if not rows:
+        await update.message.reply_text(
+            "📭 Статистика отсутствует",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    lines = ["🏆 Топ пользователей:", ""]
+
+    for index, row in enumerate(rows, start=1):
+        lines.append(
+            f"{index}. {row.get('user_id')} — "
+            f"{row.get('issued_count', 0)} ссылок"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        reply_markup=get_admin_keyboard(),
+    )
+
+
+async def admin_get(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Использование:\n"
+            "/admin_get COUNT\n\n"
+            "Максимум: 50",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    try:
+        count = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Количество должно быть числом",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    if not 1 <= count <= 50:
+        await update.message.reply_text(
+            "❌ Количество должно быть от 1 до 50",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    links = await db.take_links(count)
+
     if not links:
-        await update.message.reply_text("❌ Ссылки не найдены", reply_markup=get_admin_keyboard())
+        await update.message.reply_text(
+            "❌ Ссылок в пуле нет",
+            reply_markup=get_admin_keyboard(),
+        )
         return
-    
-    # Добавляем ссылки
-    added = await db_add_links(links)
-    text = f"✅ Добавлено {added} из {len(links)} ссылок"
-    
-    if added < len(links):
-        text += f"\n⚠️ {len(links) - added} ссылок не добавлены (возможно, дубликаты)"
-    
-    await update.message.reply_text(text, reply_markup=get_admin_keyboard())
-    context.user_data['admin_waiting_links'] = False
 
-# ========== ГЛАВНАЯ ФУНКЦИЯ ==========
-def main():
-    """Запуск бота"""
-    logger.info("🚀 Инициализация бота...")
-    
-    app = Application.builder().token(BOT_TOKEN).build()
-    
-    # ===== ОБРАБОТЧИКИ КОМАНД =====
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("key", activate_key))
-    app.add_handler(CommandHandler("get", get_link))
-    app.add_handler(CommandHandler("stat", get_stats))
-    app.add_handler(CommandHandler("history", get_history))
-    
-    # Админ команды
-    app.add_handler(CommandHandler("admin_create", admin_create))
-    app.add_handler(CommandHandler("admin_addlinks", admin_addlinks))
-    app.add_handler(CommandHandler("admin_stats", admin_stats))
-    app.add_handler(CommandHandler("admin_users", admin_users))
-    app.add_handler(CommandHandler("admin_keys", admin_all_keys))
-    app.add_handler(CommandHandler("admin_delete_unused", admin_delete_unused))
-    
-    # ===== ОБРАБОТЧИКИ СООБЩЕНИЙ =====
-    # Обработка файлов и текста для админа (перед остальными!!)
-    app.add_handler(MessageHandler(
-        filters.Document.ALL | (filters.TEXT & ~filters.COMMAND),
-        handle_file_or_text
-    ))
-    
-    # ===== ОБРАБОТЧИК CALLBACK QUERIES =====
-    app.add_handler(CallbackQueryHandler(button_callback))
-    
-    logger.info("✅ Бот инициализирован. Запуск Long Polling...")
-    app.run_polling()
+    remaining = await db.count_links()
+
+    lines = [
+        f"📎 Получено ссылок: {len(links)}",
+        "",
+    ]
+
+    for index, link in enumerate(links, start=1):
+        lines.append(f"{index}. {link}")
+
+    lines.extend([
+        "",
+        f"📊 Осталось в пуле: {remaining}",
+    ])
+
+    await send_long_text(
+        update.message,
+        "\n".join(lines),
+        get_admin_keyboard(),
+    )
+
+
+async def admin_all_keys(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    await update.message.reply_text(
+        "🔑 Выберите фильтр ключей:",
+        reply_markup=get_keys_filter_keyboard(),
+    )
+
+
+async def admin_add_screenshot(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    if context.args:
+        name = " ".join(context.args).strip()
+
+        if len(name) > MAX_SCREENSHOT_NAME_LENGTH:
+            await update.message.reply_text(
+                "❌ Слишком длинное название",
+                reply_markup=get_admin_keyboard(),
+            )
+            return
+
+        context.user_data["input_state"] = {
+            "mode": "screenshot_photo",
+            "name": name,
+        }
+
+        await update.message.reply_text(
+            f"Теперь отправьте изображение.\n"
+            f"Название: {name}\n\n"
+            "Для отмены: /cancel",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    context.user_data["input_state"] = {
+        "mode": "screenshot_name"
+    }
+
+    await update.message.reply_text(
+        "Отправьте название скриншота.\n\n"
+        "После этого бот попросит изображение.\n"
+        "Для отмены: /cancel",
+        reply_markup=get_admin_keyboard(),
+    )
+
+
+async def admin_list_screenshots(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    screenshots = await db.get_screenshots()
+
+    if not screenshots:
+        await update.message.reply_text(
+            "📭 Скриншотов нет",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    lines = ["📸 Скриншоты:", ""]
+
+    for screenshot in screenshots:
+        lines.append(
+            f"ID {screenshot.get('id')} — "
+            f"{screenshot.get('name')}"
+        )
+
+    lines.extend([
+        "",
+        "Удаление:",
+        "/admin_del_screenshot ID",
+    ])
+
+    await send_long_text(
+        update.message,
+        "\n".join(lines),
+        get_admin_keyboard(),
+    )
+
+
+async def admin_del_screenshot(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_admin(update):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Использование:\n"
+            "/admin_del_screenshot ID",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    try:
+        screenshot_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ ID должен быть числом",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    screenshot = await db.get_screenshot(screenshot_id)
+
+    if not screenshot:
+        await update.message.reply_text(
+            "❌ Скриншот не найден",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    await db.delete_screenshot(screenshot_id)
+
+    await update.message.reply_text(
+        f"✅ Скриншот «{screenshot.get('name')}» удалён",
+        reply_markup=get_admin_keyboard(),
+    )
+
+
+# =========================================================
+# ОБРАБОТКА ТЕКСТА, ФАЙЛОВ И ФОТО
+# =========================================================
+
+def sanitize_links(
+    raw_lines: list[str],
+) -> tuple[list[str], int]:
+    valid: list[str] = []
+    invalid_count = 0
+    seen: set[str] = set()
+
+    for raw_line in raw_lines:
+        link = raw_line.strip()
+
+        if not link:
+            continue
+
+        if len(link) > MAX_LINK_LENGTH:
+            invalid_count += 1
+            continue
+
+        if any(character.isspace() for character in link):
+            invalid_count += 1
+            continue
+
+        if link in seen:
+            continue
+
+        seen.add(link)
+        valid.append(link)
+
+        if len(valid) >= MAX_LINKS_PER_FILE:
+            break
+
+    return valid, invalid_count
+
+
+async def handle_admin_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not is_admin(update.effective_user.id):
+        return
+
+    state = context.user_data.get("input_state")
+
+    if not state:
+        return
+
+    mode = state.get("mode")
+
+    if mode == "links":
+        raw_lines: list[str]
+
+        if update.message.document:
+            document = update.message.document
+
+            if (
+                document.file_size
+                and document.file_size > MAX_TEXT_FILE_SIZE
+            ):
+                await update.message.reply_text(
+                    "❌ Файл слишком большой. Максимум 2 МБ."
+                )
+                return
+
+            filename = (document.file_name or "").lower()
+
+            if filename and not filename.endswith(".txt"):
+                await update.message.reply_text(
+                    "❌ Поддерживаются только .txt файлы"
+                )
+                return
+
+            telegram_file = await context.bot.get_file(
+                document.file_id
+            )
+            content = await telegram_file.download_as_bytearray()
+
+            try:
+                decoded = content.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                await update.message.reply_text(
+                    "❌ Файл должен быть в кодировке UTF-8"
+                )
+                return
+
+            raw_lines = decoded.splitlines()
+
+        elif update.message.text:
+            raw_lines = update.message.text.splitlines()
+
+        else:
+            await update.message.reply_text(
+                "❌ Отправьте текст или .txt файл"
+            )
+            return
+
+        links, invalid_count = sanitize_links(raw_lines)
+
+        if not links:
+            await update.message.reply_text(
+                "❌ Подходящие ссылки не найдены"
+            )
+            return
+
+        added = await db.add_links(links)
+
+        context.user_data.pop("input_state", None)
+
+        await update.message.reply_text(
+            f"✅ Добавлено новых ссылок: {added}\n"
+            f"Получено корректных строк: {len(links)}\n"
+            f"Пропущено некорректных: {invalid_count}\n"
+            f"Дубликаты автоматически проигнорированы.",
+            reply_markup=get_admin_keyboard(),
+        )
+        return
+
+    if mode == "screenshot_name":
+        if update.message.photo:
+            name = (
+                update.message.caption
+                or "Скриншот"
+            ).strip()
+
+            file_id = update.message.photo[-1].file_id
+
+            await db.save_screenshot(name, file_id)
+            context.user_data.pop("input_state", None)
+
+            await update.message.reply_text(
+                f"✅ Скриншот «{name}» сохранён",
+                reply_markup=get_admin_keyboard(),
+            )
+            return
+
+        if not update.message.text:
+            await update.message.reply_text(
+                "❌ Отправьте название текстом"
+            )
+            return
+
+        name = update.message.text.strip()
+
+        if not name:
+            await update.message.reply_text(
+                "❌ Название не должно быть пустым"
+            )
+            return
+
+        if len(name) > MAX_SCREENSHOT_NAME_LENGTH:
+            await update.message.reply_text(
+                "❌ Максимальная длина названия — 100 символов"
+            )
+            return
+
+        context.user_data["input_state"] = {
+            "mode": "screenshot_photo",
+            "name": name,
+        }
+
+        await update.message.reply_text(
+            f"✅ Название сохранено: {name}\n\n"
+            "Теперь отправьте изображение."
+        )
+        return
+
+    if mode == "screenshot_photo":
+        if not update.message.photo:
+            await update.message.reply_text(
+                "❌ Отправьте изображение как фотографию"
+            )
+            return
+
+        name = str(state.get("name") or "Скриншот")
+        file_id = update.message.photo[-1].file_id
+
+        saved = await db.save_screenshot(
+            name,
+            file_id,
+        )
+
+        if not saved:
+            await update.message.reply_text(
+                "❌ Не удалось сохранить скриншот"
+            )
+            return
+
+        context.user_data.pop("input_state", None)
+
+        await update.message.reply_text(
+            f"✅ Скриншот «{name}» сохранён",
+            reply_markup=get_admin_keyboard(),
+        )
+
+
+# =========================================================
+# CALLBACK-КНОПКИ
+# =========================================================
+
+async def button_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    data = query.data or ""
+    user_id = update.effective_user.id
+
+    if data.startswith("admin:") and not is_admin(user_id):
+        await query.answer(
+            "Доступ запрещён",
+            show_alert=True,
+        )
+        return
+
+    await query.answer()
+
+    # -----------------------------------------------------
+    # Статус конкретной ссылки
+    # -----------------------------------------------------
+
+    if data.startswith("status:"):
+        try:
+            _, status, history_id_raw = data.split(":", 2)
+            history_id = int(history_id_raw)
+        except (ValueError, TypeError):
+            await safe_edit(
+                query,
+                "❌ Некорректные данные",
+                get_main_keyboard(),
+            )
+            return
+
+        result = await db.set_link_status(
+            history_id,
+            user_id,
+            status,
+        )
+
+        if result.get("success"):
+            await safe_edit(
+                query,
+                (
+                    "✅ Статус сохранён: "
+                    + (
+                        "ссылка работает"
+                        if status == "yes"
+                        else "ссылка не работает"
+                    )
+                ),
+                get_main_keyboard(),
+            )
+            return
+
+        messages = {
+            "not_found": "Запись истории не найдена",
+            "already_set": "Статус уже был установлен",
+            "invalid_status": "Некорректный статус",
+        }
+
+        await safe_edit(
+            query,
+            f"❌ {messages.get(result.get('code'), 'Ошибка')}",
+            get_main_keyboard(),
+        )
+        return
+
+    # -----------------------------------------------------
+    # Пользовательское меню
+    # -----------------------------------------------------
+
+    if data == "menu:start":
+        await safe_edit(
+            query,
+            main_menu_text(),
+            keyboard_for_user(user_id),
+            ParseMode.HTML,
+        )
+        return
+
+    if data == "menu:info":
+        await send_info_content(
+            update,
+            context,
+            edit=True,
+        )
+        return
+
+    if data == "menu:help":
+        await safe_edit(
+            query,
+            help_text(is_admin(user_id)),
+            keyboard_for_user(user_id),
+            ParseMode.HTML,
+        )
+        return
+
+    if data == "menu:stats":
+        text = await build_user_stats_text(user_id)
+
+        await safe_edit(
+            query,
+            text,
+            get_main_keyboard(),
+        )
+        return
+
+    if data == "menu:history":
+        text = await build_history_text(user_id)
+
+        await safe_edit(
+            query,
+            text,
+            get_main_keyboard(),
+        )
+        return
+
+    if data == "menu:get":
+        result = await db.issue_link(user_id)
+
+        if not result.get("success"):
+            messages = {
+                "no_active_keys": (
+                    "Нет активных ключей с доступным лимитом"
+                ),
+                "no_links": (
+                    "Ссылки временно закончились. "
+                    "Лимит не был списан."
+                ),
+            }
+
+            await safe_edit(
+                query,
+                f"❌ {messages.get(result.get('code'), 'Ошибка')}",
+                get_main_keyboard(),
+            )
+            return
+
+        await safe_edit(
+            query,
+            "📎 Ваша ссылка:\n"
+            f"{result.get('link')}\n\n"
+            f"Ключ: {result.get('key_text')}\n"
+            f"Осталось: {result.get('remaining', 0)}\n\n"
+            "Укажите, работает ли ссылка:",
+            status_keyboard(int(result["history_id"])),
+        )
+        return
+
+    # -----------------------------------------------------
+    # Административное меню
+    # -----------------------------------------------------
+
+    if data == "admin:stats":
+        result = await db.get_admin_stats()
+
+        text = (
+            "📊 Общая статистика:\n\n"
+            f"Ключей: {result.get('total_keys', 0)}\n"
+            f"Пользователей: {result.get('total_users', 0)}\n"
+            f"Ссылок в пуле: {result.get('total_links', 0)}\n"
+            f"Выдано ссылок: {result.get('total_issued', 0)}"
+        )
+
+        await safe_edit(
+            query,
+            text,
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:users":
+        rows = await db.get_all_user_keys()
+        text = render_users(rows, 3500)
+
+        await safe_edit(
+            query,
+            text,
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:create":
+        await safe_edit(
+            query,
+            "Создание ключей:\n\n"
+            "/admin_create TYPE COUNT LIMIT\n\n"
+            "Пример:\n"
+            "/admin_create premium 5 100",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:addlinks":
+        context.user_data["input_state"] = {
+            "mode": "links"
+        }
+
+        await safe_edit(
+            query,
+            "📤 Отправьте .txt файл или ссылки текстом.\n"
+            "Одна ссылка — одна строка.\n\n"
+            "Для отмены: /cancel",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:links":
+        count = await db.count_links()
+
+        await safe_edit(
+            query,
+            f"🔗 Ссылок в пуле: {count}",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:top":
+        rows = await db.top_users(10)
+
+        if not rows:
+            text = "📭 Статистика отсутствует"
+        else:
+            lines = ["🏆 Топ пользователей:", ""]
+
+            for index, row in enumerate(rows, start=1):
+                lines.append(
+                    f"{index}. {row.get('user_id')} — "
+                    f"{row.get('issued_count', 0)} ссылок"
+                )
+
+            text = "\n".join(lines)
+
+        await safe_edit(
+            query,
+            text,
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:get":
+        await safe_edit(
+            query,
+            "Выдача ссылок администратору:\n\n"
+            "/admin_get COUNT\n\n"
+            "Пример:\n"
+            "/admin_get 5",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:activate":
+        await safe_edit(
+            query,
+            "Активация ключа:\n\n"
+            "/admin_activate KEY",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:deactivate":
+        await safe_edit(
+            query,
+            "Деактивация ключа:\n\n"
+            "/admin_deactivate KEY",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:refill":
+        await safe_edit(
+            query,
+            "Пополнение ключа:\n\n"
+            "/admin_refill KEY AMOUNT",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:deletekey":
+        await safe_edit(
+            query,
+            "Удаление ключа:\n\n"
+            "/admin_deletekey KEY",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:deleteuser":
+        await safe_edit(
+            query,
+            "Удаление пользователя:\n\n"
+            "/admin_deleteuser USER_ID",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:help":
+        await safe_edit(
+            query,
+            admin_help_text(),
+            get_admin_keyboard(),
+            ParseMode.HTML,
+        )
+        return
+
+    if data == "admin:allkeys":
+        await safe_edit(
+            query,
+            "🔑 Выберите фильтр ключей:",
+            get_keys_filter_keyboard(),
+        )
+        return
+
+    if data.startswith("admin:keys:"):
+        filter_name = data.rsplit(":", 1)[-1]
+
+        filters_map = {
+            "active": True,
+            "inactive": False,
+            "all": None,
+        }
+
+        if filter_name not in filters_map:
+            await safe_edit(
+                query,
+                "❌ Некорректный фильтр",
+                get_admin_keyboard(),
+            )
+            return
+
+        rows, total = await db.list_keys(
+            filters_map[filter_name],
+            50,
+        )
+
+        if not rows:
+            await safe_edit(
+                query,
+                "📭 Ключи не найдены",
+                get_keys_filter_keyboard(),
+            )
+            return
+
+        lines = [
+            f"🔑 Найдено ключей: {total}",
+            "",
+        ]
+
+        for row in rows:
+            marker = "🟢" if row.get("active") else "🔴"
+            owner = row.get("owner_id")
+
+            lines.append(
+                f"{marker} {row.get('key_text')}\n"
+                f"   Владелец: "
+                f"{owner if owner is not None else 'не привязан'}\n"
+                f"   Лимит: {row.get('max_links', 0)}"
+            )
+
+        if total > len(rows):
+            lines.extend([
+                "",
+                f"... и ещё {total - len(rows)}",
+            ])
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🔄 Обновить",
+                    callback_data=data,
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 К фильтрам",
+                    callback_data="admin:allkeys",
+                ),
+                InlineKeyboardButton(
+                    "🏠 Меню",
+                    callback_data="menu:start",
+                ),
+            ],
+        ])
+
+        text = "\n".join(lines)
+
+        if len(text) > TELEGRAM_TEXT_LIMIT:
+            text = (
+                text[:TELEGRAM_TEXT_LIMIT - 50]
+                + "\n\n... список сокращён"
+            )
+
+        await safe_edit(
+            query,
+            text,
+            keyboard,
+        )
+        return
+
+    if data == "admin:unused:ask":
+        count = await db.count_unused_keys()
+
+        if count == 0:
+            await safe_edit(
+                query,
+                "📭 Неиспользуемых ключей нет",
+                get_admin_keyboard(),
+            )
+            return
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "✅ Удалить все",
+                    callback_data="admin:unused:yes",
+                ),
+                InlineKeyboardButton(
+                    "❌ Отмена",
+                    callback_data="admin:cancel",
+                ),
+            ],
+        ])
+
+        await safe_edit(
+            query,
+            f"⚠️ Неиспользуемых ключей: {count}\n\n"
+            "Удалить их безвозвратно?",
+            keyboard,
+        )
+        return
+
+    if data == "admin:unused:yes":
+        result = await db.delete_unused_keys()
+
+        await safe_edit(
+            query,
+            f"✅ Удалено ключей: "
+            f"{result.get('deleted_count', 0)}",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data.startswith("admin:deluser:ask:"):
+        try:
+            target_user_id = int(data.rsplit(":", 1)[-1])
+        except ValueError:
+            await safe_edit(
+                query,
+                "❌ Некорректный ID",
+                get_admin_keyboard(),
+            )
+            return
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "✅ Да, удалить",
+                    callback_data=(
+                        f"admin:deluser:yes:{target_user_id}"
+                    ),
+                ),
+                InlineKeyboardButton(
+                    "❌ Отмена",
+                    callback_data="admin:cancel",
+                ),
+            ],
+        ])
+
+        await safe_edit(
+            query,
+            f"⚠️ Удалить пользователя {target_user_id}?\n\n"
+            "Будут удалены его ключи и история.",
+            keyboard,
+        )
+        return
+
+    if data.startswith("admin:deluser:yes:"):
+        try:
+            target_user_id = int(data.rsplit(":", 1)[-1])
+        except ValueError:
+            await safe_edit(
+                query,
+                "❌ Некорректный ID",
+                get_admin_keyboard(),
+            )
+            return
+
+        result = await db.delete_user(target_user_id)
+
+        await safe_edit(
+            query,
+            "✅ Пользователь удалён\n\n"
+            f"Удалено ключей: "
+            f"{result.get('deleted_keys', 0)}\n"
+            f"Удалено записей истории: "
+            f"{result.get('deleted_history', 0)}",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data.startswith("admin:delkey:yes:"):
+        token = data.rsplit(":", 1)[-1]
+
+        pending = context.user_data.get(
+            "pending_key_deletes",
+            {},
+        )
+
+        key_text = pending.pop(token, None)
+
+        if not key_text:
+            await safe_edit(
+                query,
+                "❌ Подтверждение устарело",
+                get_admin_keyboard(),
+            )
+            return
+
+        result = await db.delete_key(key_text)
+
+        if result.get("success"):
+            text = f"✅ Ключ {key_text} удалён"
+        else:
+            text = "❌ Ключ не найден"
+
+        await safe_edit(
+            query,
+            text,
+            get_admin_keyboard(),
+        )
+        return
+
+    if data.startswith("admin:delkey:no:"):
+        token = data.rsplit(":", 1)[-1]
+
+        pending = context.user_data.get(
+            "pending_key_deletes",
+            {},
+        )
+        pending.pop(token, None)
+
+        await safe_edit(
+            query,
+            "❌ Удаление ключа отменено",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:screens":
+        screenshots = await db.get_screenshots()
+
+        if screenshots:
+            lines = ["📸 Скриншоты:", ""]
+
+            for screenshot in screenshots[:50]:
+                lines.append(
+                    f"ID {screenshot.get('id')} — "
+                    f"{screenshot.get('name')}"
+                )
+
+            text = "\n".join(lines)
+        else:
+            text = "📭 Скриншотов нет"
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "➕ Добавить",
+                    callback_data="admin:screens:add",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🏠 Главное меню",
+                    callback_data="menu:start",
+                ),
+            ],
+        ])
+
+        await safe_edit(
+            query,
+            text,
+            keyboard,
+        )
+        return
+
+    if data == "admin:screens:add":
+        context.user_data["input_state"] = {
+            "mode": "screenshot_name"
+        }
+
+        await safe_edit(
+            query,
+            "Отправьте название скриншота.\n\n"
+            "После этого отправьте изображение.\n"
+            "Для отмены: /cancel",
+            get_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:cancel":
+        context.user_data.pop("input_state", None)
+
+        await safe_edit(
+            query,
+            "❌ Операция отменена",
+            get_admin_keyboard(),
+        )
+        return
+
+    await safe_edit(
+        query,
+        "❌ Неизвестная команда",
+        keyboard_for_user(user_id),
+    )
+
+
+# =========================================================
+# ОБРАБОТКА ОШИБОК
+# =========================================================
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    error = context.error
+
+    logger.error(
+        "Необработанная ошибка",
+        exc_info=(
+            type(error),
+            error,
+            error.__traceback__,
+        ) if error else None,
+    )
+
+    if not isinstance(update, Update):
+        return
+
+    try:
+        if update.callback_query:
+            await update.callback_query.answer(
+                "Произошла внутренняя ошибка",
+                show_alert=True,
+            )
+        elif update.effective_message:
+            await update.effective_message.reply_text(
+                "❌ Произошла внутренняя ошибка. "
+                "Попробуйте ещё раз позже."
+            )
+    except Exception:
+        logger.exception(
+            "Не удалось отправить сообщение об ошибке"
+        )
+
+
+# =========================================================
+# СОЗДАНИЕ ПРИЛОЖЕНИЯ
+# =========================================================
+
+def create_application() -> Application:
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
+
+    # Пользовательские команды
+    application.add_handler(
+        CommandHandler("start", start)
+    )
+    application.add_handler(
+        CommandHandler("help", help_command)
+    )
+    application.add_handler(
+        CommandHandler("info", info_command)
+    )
+    application.add_handler(
+        CommandHandler("key", set_key)
+    )
+    application.add_handler(
+        CommandHandler("get", get_link)
+    )
+    application.add_handler(
+        CommandHandler("stat", stats_command)
+    )
+    application.add_handler(
+        CommandHandler("history", history_command)
+    )
+    application.add_handler(
+        CommandHandler("cancel", cancel_command)
+    )
+
+    # Административные команды
+    application.add_handler(
+        CommandHandler("admin_help", admin_help)
+    )
+    application.add_handler(
+        CommandHandler("admin_stats", admin_stats)
+    )
+    application.add_handler(
+        CommandHandler("admin_links", admin_links)
+    )
+    application.add_handler(
+        CommandHandler("admin_users", admin_users)
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_userinfo",
+            admin_userinfo,
+        )
+    )
+    application.add_handler(
+        CommandHandler("admin_create", admin_create)
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_activate",
+            admin_activate,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_deactivate",
+            admin_deactivate,
+        )
+    )
+    application.add_handler(
+        CommandHandler("admin_refill", admin_refill)
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_deletekey",
+            admin_deletekey,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_confirm_delete",
+            admin_deletekey,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_confirm_delete_key",
+            admin_deletekey,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_deleteuser",
+            admin_deleteuser,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_addlinks",
+            admin_addlinks,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_delete_unused",
+            admin_delete_unused,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_linkstats",
+            admin_linkstats,
+        )
+    )
+    application.add_handler(
+        CommandHandler("admin_get", admin_get)
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_all_keys",
+            admin_all_keys,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_add_screenshot",
+            admin_add_screenshot,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_list_screenshots",
+            admin_list_screenshots,
+        )
+    )
+    application.add_handler(
+        CommandHandler(
+            "admin_del_screenshot",
+            admin_del_screenshot,
+        )
+    )
+
+    # Один обработчик всех inline-кнопок
+    application.add_handler(
+        CallbackQueryHandler(button_callback)
+    )
+
+    # Один обработчик административного ввода.
+    # Команды исключены, поэтому они не перехватываются.
+    input_filter = (
+        (filters.TEXT & ~filters.COMMAND)
+        | filters.Document.ALL
+        | filters.PHOTO
+    )
+
+    application.add_handler(
+        MessageHandler(
+            input_filter,
+            handle_admin_input,
+        )
+    )
+
+    application.add_error_handler(error_handler)
+
+    return application
+
+
+# =========================================================
+# ЗАПУСК
+# =========================================================
+
+def main() -> None:
+    logger.info("Запуск NFAvpn Telegram-бота")
+    logger.info("ADMIN_ID=%s", ADMIN_ID)
+
+    application = create_application()
+
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=False,
+    )
+
 
 if __name__ == "__main__":
     main()
