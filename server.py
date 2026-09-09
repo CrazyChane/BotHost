@@ -715,17 +715,17 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
         return
     
-    text = "👥 **Пользователи и их ключи:**\n\n"
+    text = "👥 <b>Пользователи и их ключи:</b>\n\n"
     
     for uid, keys in users_dict.items():
-        text += f"**🆔 {uid}** — {len(keys)} ключей\n"
+        text += f"<b>🆔 {uid}</b> — {len(keys)} ключей\n"
         for key in keys:
-            text += f"  🔑 `{key}`\n"
-        text += f"  👤 `/admin_userinfo {uid}`\n"
+            text += f"  🔑 <code>{key}</code>\n"
+        text += f"  👤 /admin_userinfo {uid}\n"
         text += "\n"
     
     text += "\n💡 Нажмите на команду выше, чтобы открыть профиль пользователя"
-    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+    await update.message.reply_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
 
 async def admin_userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать полную информацию о пользователе по ID"""
@@ -753,24 +753,24 @@ async def admin_userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not user_keys:
         await update.message.reply_text(
-            f"👤 Пользователь с ID `{user_id}` не найден или у него нет ключей",
+            f"👤 Пользователь с ID <code>{user_id}</code> не найден или у него нет ключей",
             reply_markup=get_admin_keyboard(),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
     
-    text = f"👤 **Профиль пользователя:**\n"
-    text += f"🆔 **ID:** `{user_id}`\n"
-    text += f"🔑 **Всего ключей:** {len(user_keys)}\n\n"
+    text = f"👤 <b>Профиль пользователя:</b>\n"
+    text += f"🆔 <b>ID:</b> <code>{user_id}</code>\n"
+    text += f"🔑 <b>Всего ключей:</b> {len(user_keys)}\n\n"
     
     total_links = 0
-    text += "📋 **Ключи пользователя:**\n"
+    text += "📋 <b>Ключи пользователя:</b>\n"
     
     for uk in user_keys:
         key_text = uk['key_text']
         remaining = uk['remaining_links']
         total_links += remaining
-        text += f"  🔑 `{key_text}` — осталось {remaining} ссылок\n"
+        text += f"  🔑 <code>{key_text}</code> — осталось {remaining} ссылок\n"
         
         user_data = load_data(user_id)
         if key_text in user_data and user_data[key_text]['links_history']:
@@ -782,7 +782,7 @@ async def admin_userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"     🕐 Дата: {last_link['timestamp'][:16]}\n"
         text += "\n"
     
-    text += f"📊 **Всего осталось ссылок:** {total_links}\n"
+    text += f"📊 <b>Всего осталось ссылок:</b> {total_links}\n"
     
     keyboard = [
         [
@@ -792,7 +792,7 @@ async def admin_userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
 
 async def admin_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
@@ -1516,32 +1516,32 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await query.edit_message_text(f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
         
-        elif data == "admin_users":
-            user_keys = load_user_keys()
-            users_dict = {}
-            
-            for uk in user_keys:
-                uid = uk.get('owner_id')
-                if uid:
-                    if uid not in users_dict:
-                        users_dict[uid] = []
-                    users_dict[uid].append(uk['key_text'])
-            
-            if not users_dict:
-                await query.edit_message_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
-                return
-            
-            text = "👥 **Пользователи и их ключи:**\n\n"
-            
-            for uid, keys in users_dict.items():
-                text += f"**🆔 {uid}** — {len(keys)} ключей\n"
-                for key in keys:
-                    text += f"  🔑 `{key}`\n"
-                text += f"  👤 `/admin_userinfo {uid}`\n"
-                text += "\n"
-            
-            text += "\n💡 Нажмите на команду выше, чтобы открыть профиль пользователя"
-            await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+elif data == "admin_users":
+    user_keys = load_user_keys()
+    users_dict = {}
+    
+    for uk in user_keys:
+        uid = uk.get('owner_id')
+        if uid:
+            if uid not in users_dict:
+                users_dict[uid] = []
+            users_dict[uid].append(uk['key_text'])
+    
+    if not users_dict:
+        await query.edit_message_text("👥 Нет пользователей", reply_markup=get_admin_keyboard())
+        return
+    
+    text = "👥 <b>Пользователи и их ключи:</b>\n\n"
+    
+    for uid, keys in users_dict.items():
+        text += f"<b>🆔 {uid}</b> — {len(keys)} ключей\n"
+        for key in keys:
+            text += f"  🔑 <code>{key}</code>\n"
+        text += f"  👤 /admin_userinfo {uid}\n"
+        text += "\n"
+    
+    text += "\n💡 Нажмите на команду выше, чтобы открыть профиль пользователя"
+    await query.edit_message_text(text, reply_markup=get_admin_keyboard(), parse_mode="HTML")
         
         elif data == "admin_userinfo":
             # Это обрабатывается через команду, но на случай если кнопка
