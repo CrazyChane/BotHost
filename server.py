@@ -34,7 +34,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 
-logger = logging.getLogger("nfa_vpn_bot")
+logger = logging.getLogger("vpn_nfa_bot")
 
 
 # =========================================================
@@ -59,7 +59,7 @@ CONTACT_USERNAME = os.getenv(
 
 BOT_USERNAME = os.getenv(
     "BOT_USERNAME",
-    "NFA_vpn_bot",
+    "vpn_nfa_bot",
 ).lstrip("@")
 
 MAX_CREATE_KEYS = 100
